@@ -21,8 +21,6 @@ var gl;
 
 var clockEl;
 
-var simDateTime;
-
 var SETUP_MODE = false;
 
 var loadingBar;
@@ -250,6 +248,14 @@ function relativeHumd(T, W) { return (W / maxWater(T)) * 100.0; }
 
 // Print funtions:
 
+function round(number){
+  return (Math.round(number*10)/10);
+  };  
+
+function printRainfall(amount){
+  return (guiControls.imperialUnits) && (round(amount) + ' in.') || (round(amount*25.4) + ' mm.');
+  };
+
 function printTemp(tempC)
 {
   if (guiControls.imperialUnits) {
@@ -316,16 +322,20 @@ function potentialToRealT(potentialT, y) { return potentialT - (y / sim_res_y) *
 
 class Weatherstation
 {
-  #width = 100; // 70 display size
-  #height = 55;
   #canvas;
   #c; // 2d canvas context
   #x; // position in simulation
   #y;
 
+  #font_size = 13;
+  #width = 110; // 70 display size
+  #height = (this.#font_size*(5*1.4));
+
   #temperature = 0;
   #dewpoint = 0;
   #velocity = 0;
+  #snowfall = 0;
+  #rainfall = 0;
 
   constructor(xIn, yIn)
   {
@@ -372,7 +382,31 @@ class Weatherstation
     var waterTextureValues = new Float32Array(4);
     gl.readPixels(this.#x, this.#y, 1, 1, gl.RGBA, gl.FLOAT, waterTextureValues);
 
+    gl.readBuffer(gl.COLOR_ATTACHMENT2);
+    var wallTextureValues = new Int32Array(4 * sim_res_y);
+    gl.readPixels(this.#x, 0, 1, sim_res_y, gl.RGBA_INTEGER, gl.INT, wallTextureValues); // read a vertical column of cells
+
+    var ground_level = 0;
+    var in_air = false;
+
+    for (var y = 0; y < sim_res_y; y++) {
+    if (wallTextureValues[4 * y + 1] != 0) { // if this is fluid cell
+        if (!in_air) {
+          // first non wall cell
+          in_air = true;
+          ground_level = y;
+        }}};
+
+    gl.readBuffer(gl.COLOR_ATTACHMENT1); // watertexture
+    var snowValues = new Float32Array(4);
+    gl.readPixels(this.#x, (ground_level-1), 1, 1, gl.RGBA, gl.FLOAT, snowValues); // read a vertical column of cells
+
     this.#dewpoint = KtoC(dewpoint(waterTextureValues[0]));
+    this.#rainfall += (((waterTextureValues[2]/60)*8.61255)/3);
+    this.#snowfall = snowValues[3];
+
+   // console.log(this.#x,this.#y);
+    console.log(this.#x,(ground_level-1));
 
     if (guiControls.realDewPoint) {
       this.#dewpoint = Math.min(this.#temperature, this.#dewpoint);
@@ -399,19 +433,39 @@ class Weatherstation
     let c = this.#c;
     c.clearRect(0, 0, this.#width, this.#height);
     c.fillStyle = '#00000000';
+    c.strokeStyle = 'black';
     c.fillRect(0, 0, this.#width, this.#height);
 
-    // temperature
-    c.font = '15px Arial';
-    c.fillStyle = '#FFFFFF';
-    c.fillText(printTemp(this.#temperature), 10, 15);
-    // dew point
-    c.font = '12px Arial';
-    c.fillStyle = '#00FFFF';
-    c.fillText(printTemp(this.#dewpoint), 10, 28);
+    // setting text
+    var set_text = function(text,x,y){
+      c.strokeText(text,x,y);
+      c.fillText(text,x,y);
+      };
+  
+    // locking dataset
+    var temp_lock = (this.#temperature*1.8+32).toFixed(1);
+    var dew_lock = (this.#dewpoint*1.8+32).toFixed(1);
+    var vel_lock = (this.#velocity*2.23694).toFixed();
 
-    c.fillStyle = '#FFFFFF';
-    c.fillText(printVelocity(this.#velocity), 10, 40);
+    // temperature
+    c.fillStyle = get_gradient(gradients.temps,temp_lock);
+    set_text((`Temperature: ${printTemp(this.#temperature)}`),10,this.#font_size);
+
+    // dew point
+    c.fillStyle = get_gradient(gradients.dews,dew_lock);
+    set_text('Dewpoint: ' + printTemp(this.#dewpoint),10,(this.#font_size*2));
+
+    // velocity
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text('Winds: ' + printVelocity(this.#velocity),10,(this.#font_size*3));
+  
+    // rainfall
+    c.fillStyle = get_gradient(gradients.rainfall,this.#rainfall);
+    set_text('Precip Total: ' + printRainfall(this.#rainfall),10,(this.#font_size*4));
+
+    // snowfall
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text((`Snowfall Total: ${printSnowHeight(this.#snowfall)}`),10,(this.#font_size*5));
 
     // Position pointer
     c.beginPath();
@@ -1302,6 +1356,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     }
   }
 
+  // before: in cell coordinats
+  // now: in meters
+
   var airplane = new Airplane();
 
 
@@ -1483,13 +1540,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     var radiation_folder = datGui.addFolder('Radiation');
 
-    radiation_folder.add(guiControls, 'timeOfDay', 0.0, 23.96, 0.01).onChange(onUpdateTimeOfDaySlider).name('Time of day').listen();
+    radiation_folder.add(guiControls, 'timeOfDay', 0.0, 23.9, 0.01).onChange(function() { updateSunlight(); }).name('Time of day').listen();
 
     radiation_folder.add(guiControls, 'dayNightCycle').name('Day/Night Cycle').listen();
 
-    radiation_folder.add(guiControls, 'latitude', -90.0, 90.0, 0.1).onChange(updateSunlight).name('Latitude').listen();
+    radiation_folder.add(guiControls, 'latitude', -90.0, 90.0, 0.1).onChange(function() { updateSunlight(); }).name('Latitude').listen();
 
-    radiation_folder.add(guiControls, 'month', 1.0, 12.99, 0.01).onChange(onUpdateMonthSlider).name('Month').listen();
+    radiation_folder.add(guiControls, 'month', 1.0, 12.9, 0.1).onChange(function() { updateSunlight(); }).name('Month').listen();
 
     radiation_folder.add(guiControls, 'sunAngle', -10.0, 190.0, 0.1)
       .onChange(function() {
@@ -1728,12 +1785,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     clockEl.style.fontSize = '35px';
     clockEl.style.color = 'white';
 
-    simDateTime = new Date(2000, Math.floor(guiControls.month) - 1, (guiControls.month % 1) * 30.417);
-
-    // initialize date
-    onUpdateTimeOfDaySlider();
-    onUpdateMonthSlider();
-
     updateSunlight('MANUAL_ANGLE'); // set angle from savefile
   }
 
@@ -1743,7 +1794,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     init : function() {
       this.graphCanvas = document.getElementById('graphCanvas');
       this.graphCanvas.height = window.innerHeight;
-      this.graphCanvas.width = this.graphCanvas.height;
+      this.graphCanvas.width = 550; // change this to your desired skew-t width
+      // this.graphCanvas.width = this.graphCanvas.height;
       this.ctx = this.graphCanvas.getContext('2d');
       var style = this.graphCanvas.style;
       if (guiControls.showGraph)
@@ -1769,7 +1821,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       var wallTextureValues = new Int32Array(4 * sim_res_y);
       gl.readPixels(simXpos, 0, 1, sim_res_y, gl.RGBA_INTEGER, gl.INT, wallTextureValues); // read a vertical column of cells
 
-
       const graphBottem = this.graphCanvas.height - 40; // in pixels
 
       var c = this.ctx;
@@ -1783,7 +1834,21 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       var reachedAir = false;
       var surfaceLevel;
 
+      var T_parcel = [];
+      var T_env = [];
+
       c.fillText('' + printDistance(map_range(simXpos, 0, sim_res_y, 0, guiControls.simHeight / 1000.0)), this.graphCanvas.width - 70, 20);
+
+      // Drawing wind barbs
+      for (var y = 0; (y < sim_res_y); y+=10) {
+        var y_pos = map_range(y,sim_res_y,0,0,graphBottem);
+        var velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[4*y], 2) + Math.pow(baseTextureValues[4*y+1],2)));
+  
+        var multiplier = ((guiControls.imperialUnits) && 3.6 || 2.23694);
+        var speed = clamp(((velocity*multiplier)/100),0,1);
+  
+        c.fillText(printVelocity(velocity),(graphCanvas.width-50),y_pos);
+        };
 
       // Draw temperature line
       c.beginPath();
@@ -1803,6 +1868,19 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             reachedAir = true;
             surfaceLevel = y;
 
+            var potential_3k = baseTextureValues[4*51+3];
+            var temp_3k = (potential_3k-((51/sim_res_y)*guiControls.simHeight*guiControls.dryLapseRate)/1000-273.15);
+
+            var potential_6k = baseTextureValues[4*101+3];
+            var temp_6k = (potential_6k-((101/sim_res_y)*guiControls.simHeight*guiControls.dryLapseRate)/1000-273.15);
+
+            c.fillText('Surface Height: ' + printDistance(map_range(surfaceLevel, 0, sim_res_y, 0, guiControls.simHeight / 1000.0)), (graphCanvas.width-220), 40);
+            c.fillText('Surface Temp: '+ printTemp(temp), (graphCanvas.width-220), 60);
+            c.fillText('3km Temp: '+ printTemp(temp_3k), (graphCanvas.width-220), 80);
+            c.fillText('6km Temp: ' + printTemp(temp_6k), (graphCanvas.width-220), 100);
+            c.fillText('Sfc-3km LR: ' + (Math.round(((temp-temp_3k)/3)*10)/10*1.1).toFixed(1) + '°C/km', (graphCanvas.width-220), 120);
+            c.fillText('3-6km LR: ' + (Math.round(((temp_3k-temp_6k)/3)*10)/10*1.1).toFixed(1) + '°C/km', (graphCanvas.width-220), 140); 
+
             if (simYpos < surfaceLevel)
               simYpos = surfaceLevel;
           }
@@ -1816,6 +1894,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             c.fillText('' + printTemp(temp), T_to_Xpos(temp, scrYpos) + 20, scrYpos + 5);
           }
 
+          T_env.push(temp);
           c.lineTo(T_to_Xpos(temp, scrYpos), scrYpos);                                  // temperature
         } else if (wallTextureValues[4 * y + 2] == 0) {                                 // is surface layer
           if (wallTextureValues[4 * y + 0] == 1 || wallTextureValues[4 * y + 0] == 4) { // is land or urban
@@ -1893,6 +1972,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       c.beginPath();
       var scrYpos = map_range(simYpos, sim_res_y, 0, 0, graphBottem);
+      
       c.moveTo(T_to_Xpos(KtoC(initialTemperature), scrYpos), scrYpos);
       for (var y = simYpos + 1; y < sim_res_y; y++) {
         var dT = drylapsePerCell;
@@ -1911,7 +1991,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         var scrYpos = map_range(y, sim_res_y, 0, 0, graphBottem);
 
         c.lineTo(T_to_Xpos(KtoC(T), scrYpos), scrYpos); // temperature
-
+        T_parcel.push(KtoC(T));
+        
         prevTemp = T;
         prevCloudWater = max(water - maxWater(prevTemp), 0.0);
 
@@ -1942,7 +2023,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         c.strokeStyle = '#008800';
 
       c.stroke();
-
+      c.fillText(`CAPE: ` + Math.round(get_cape(T_parcel,T_env)) + `J/kg`,(graphCanvas.width-220),160);
+      
       function T_to_Xpos(T, y)
       {
         // temperature to horizontal position
@@ -2037,7 +2119,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     console.log('[1] Y-vel:', baseTextureValues[1]);
     console.log('[2] Press:', baseTextureValues[2]);
     console.log('[3] Temp :', baseTextureValues[3].toFixed(2) + ' K   ', KtoC(baseTextureValues[3]).toFixed(2) + ' °C   ', KtoC(potentialToRealT(baseTextureValues[3], simYpos)).toFixed(2) + ' °C');
-
+      
     //		console.log(simYpos);
 
     console.log('WATER-----------------------------------------');
@@ -3146,10 +3228,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.uniform1i(gl.getUniformLocation(advectionProgram, 'userInputType'), inputType);
 
 
-      for (i = 0; i < weatherStations.length; i++) { // initial measurement at weather stations
-        weatherStations[i].measure();
-      }
-
       // guiControls.IterPerFrame = 1.0 / timePerIteration * 3600 / 60.0;
 
 
@@ -3531,41 +3609,40 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     return num;
   }
 
-  function dateTimeStr()
+  function timeFormat(hours)
   {
-    var timeStr;
-    if (guiControls.imperialUnits) { // 12 hour clock for Americans
-      timeStr = simDateTime.toLocaleString('en-US', {hour12 : true, hour : 'numeric', minute : 'numeric'});
-    } else {                         // 24 hour clock
-      timeStr = simDateTime.toLocaleString('nl-NL', {hour12 : false, hour : 'numeric', minute : 'numeric'});
+    if (guiControls.imperialUnits) { // for Americans
+      if (hours < 12.0) {
+        let hour = Math.floor(hours);
+        if (hour == 0)
+          hour = 12;
+        let hourStr = pad(hour, 2);
+        let minuteStr = pad(Math.floor((hours % 1) * 60), 2);
+        return ' ' + hourStr + ':' + minuteStr + ' AM';
+      } else {
+        hours -= 12;
+        let hour = Math.floor(hours);
+        if (hour == 0)
+          hour = 12;
+        let hourStr = pad(hour, 2);
+        let minuteStr = pad(Math.floor((hours % 1) * 60), 2);
+        return ' ' + hourStr + ':' + minuteStr + ' PM';
+      }
     }
-
-    const monthStr = simDateTime.toLocaleString('en-us', {month : 'short', day : 'numeric'});
-    return timeStr + '&nbsp; ' + monthStr;
-  }
-
-  function onUpdateTimeOfDaySlider()
-  {
-    let minutes = (guiControls.timeOfDay % 1) * 60;
-    simDateTime.setHours(guiControls.timeOfDay, minutes);
-    updateSunlight();
-  }
-
-  function onUpdateMonthSlider()
-  {
-    let month = guiControls.month - 0.96;
-    let date = (month % 1) * 30;
-    simDateTime.setMonth(month, date);
-    updateSunlight();
+    // Simple 24 hour clock:
+    let hourStr = pad(Math.floor(hours), 2);
+    let minuteStr = pad(Math.floor((hours % 1) * 60), 2);
+    return ' ' + hourStr + ':' + minuteStr;
   }
 
   function updateSunlight(deltaT_hours)
   {
     if (deltaT_hours != 'MANUAL_ANGLE') {
       if (deltaT_hours != null) {
-        simDateTime = new Date(simDateTime.getTime() + deltaT_hours * 3600 * 1000); // convert hours to ms and add to current date
-        guiControls.timeOfDay = simDateTime.getHours() + simDateTime.getMinutes() / 60.0;
-        guiControls.month = simDateTime.getMonth() + 1 + simDateTime.getDate() / 30.0;
+        guiControls.timeOfDay += deltaT_hours;    // day angle in degrees
+        guiControls.month += deltaT_hours / 730.; // ~730 hours in a month
+        if (guiControls.timeOfDay >= 24.0)
+          guiControls.timeOfDay = 0.0;
       }
 
       let timeOfDayRad = (guiControls.timeOfDay / 24.0) * 2.0 * Math.PI; // convert to radians
@@ -3606,7 +3683,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     gl.uniform1f(gl.getUniformLocation(realisticDisplayProgram, 'sunAngle'), sunAngleForShaders);
 
     if (guiControls.dayNightCycle)
-      clockEl.innerHTML = dateTimeStr(); // update clock
+      clockEl.innerHTML = timeFormat(guiControls.timeOfDay); // update clock
     else
       clockEl.innerHTML = "";
   }
