@@ -77,13 +77,13 @@ const guiControls_default = {
   showGraph : false,
   realDewPoint : true, // show real dew point in graph, instead of dew point with cloud water included
   enablePrecipitation : true,
-  showDrops : false,
+  showDrops : true,
   paused : false,
-  IterPerFrame : 10,
-  auto_IterPerFrame : true,
+  IterPerFrame : 2,
+  auto_IterPerFrame : false,
   dryLapseRate : 10.0,   // Real: 9.81 degrees / km
   simHeight : 12000,     // 12000 meters
-  imperialUnits : false, // only for display.  false = metric
+  imperialUnits : true, // only for display.  false = metric
 };
 
 var horizontalDisplayMult = 3.0; // 3.0 to cover srceen while zoomed out
@@ -405,9 +405,6 @@ class Weatherstation
     this.#rainfall += (((waterTextureValues[2]/60)*8.61255)/3);
     this.#snowfall = snowValues[3];
 
-   // console.log(this.#x,this.#y);
-    console.log(this.#x,(ground_level-1));
-
     if (guiControls.realDewPoint) {
       this.#dewpoint = Math.min(this.#temperature, this.#dewpoint);
     }
@@ -477,9 +474,7 @@ class Weatherstation
   }
 }
 
-
 let weatherStations = []; // array holding all weather stations
-
 
 async function loadData()
 {
@@ -544,7 +539,7 @@ async function loadData()
       let precipArrayBlob = dataBlob.slice(sliceStart, sliceEnd);
       let precipArrayBuf = await precipArrayBlob.arrayBuffer();
       let precipArray = new Float32Array(precipArrayBuf);
-
+      
       if (version == saveFileVersionID) {             // only load settings and weather stations from save file if it's the newest version with all the settings included
         sliceStart = sliceEnd;
         sliceEnd += 1 * Int16Array.BYTES_PER_ELEMENT; // one 16 bit int indicates number of weather stations
@@ -560,16 +555,32 @@ async function loadData()
         let weatherStationBuf = await weatherStationArrayBlob.arrayBuffer();
         let weatherStationArray = new Int16Array(weatherStationBuf);
 
-
         for (i = 0; i < numWeatherStations; i++) {
           weatherStations.push(new Weatherstation(weatherStationArray[i * 2], weatherStationArray[i * 2 + 1]));
         }
 
         sliceStart = sliceEnd;
+        sliceEnd += 1 * Int16Array.BYTES_PER_ELEMENT; // one 16 bit int indicates number of weather stations
+        let numcityarrayblob = dataBlob.slice(sliceStart, sliceEnd);
+        let numcitybuf = await numcityarrayblob.arrayBuffer();
+        let numcities = new Int16Array(numcitybuf)[0];
+
+        console.log("number of cities", numcities);
+
+        sliceStart = sliceEnd;
+        sliceEnd += numcities * 2 * Int16Array.BYTES_PER_ELEMENT;
+        let cityarrayblob = dataBlob.slice(sliceStart, sliceEnd);
+        let citybuf = await cityarrayblob.arrayBuffer();
+        let cityarray = new Int16Array(citybuf);
+
+        for (i = 0; i < numcities; i++) {
+          city_blips.push(new cityblip(cityarray[i * 2], cityarray[i * 2 + 1]));
+        }
+
+        sliceStart = sliceEnd;
         let settingsArrayBlob = dataBlob.slice(sliceStart); // until end of file
-
-
         guiControlsFromSaveFile = await settingsArrayBlob.text();
+
       } else {
         alert('Save File from older version, settings will not be loaded');
       }
@@ -1531,6 +1542,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         'Snow' : 'TOOL_WALL_SNOW',
         'wind' : 'TOOL_WIND',
         'weather station' : 'TOOL_STATION',
+        'city name' : 'TOOL_CITYNAME',
       })
       .name('Tool')
       .listen();
@@ -2220,7 +2232,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       leftMousePressed = true;
       if (SETUP_MODE) {
         startSimulation();
-      } else if (guiControls.tool == 'TOOL_STATION') {
+      } else if (guiControls.tool == 'TOOL_STATION' || guiControls.tool == 'TOOL_CITYNAME') {
         let simXpos = mouseXinSim * sim_res_x;
         let simYpos = mouseYinSim * sim_res_y;
 
@@ -2230,7 +2242,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         gl.readPixels(simXpos, simYpos, 1, 1, gl.RGBA_INTEGER, gl.BYTE, wallTextureValues);
 
         if (wallTextureValues[1] > 0) // only place if cell is not wall
+        if (guiControls.tool == 'TOOL_STATION'){
           weatherStations.push(new Weatherstation(simXpos, simYpos));
+        return;
+        };
+        if (guiControls.tool == 'TOOL_CITYNAME'){
+          city_blips.push(new cityblip(simXpos, simYpos));
+        return; 
+        }
       }
     } else if (e.button == 1) {
       // middle mouse button
@@ -3410,7 +3429,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     let cursorType = 1.0; // normal circular brush
     if (guiControls.wholeWidth) {
       cursorType = 2.0;   // cursor whole width brush
-    } else if (SETUP_MODE || (inputType <= 0 && !bPressed && (guiControls.tool == 'TOOL_NONE' || guiControls.tool == 'TOOL_STATION'))) {
+    } else if (SETUP_MODE || (inputType <= 0 && !bPressed && (guiControls.tool == 'TOOL_NONE' || guiControls.tool == 'TOOL_STATION' || guiControls.tool == 'TOOL_CITYNAME'))) {
       cursorType = 0;     // cursor off sig
     }
 
@@ -3586,6 +3605,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       weatherStations[i].updateCanvas(); // update weather stations
     }
 
+    for (i = 0; i < city_blips.length; i++) {
+      city_blips[i].update(); // update weather stations
+    }
+
     frameNum++;
     requestAnimationFrame(draw);
   }
@@ -3721,10 +3744,19 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           weatherStationsPositions[i * 2 + 1] = weatherStations[i].getYpos();
         }
 
+        let cityPositions = new Int16Array(city_blips.length * 2);
+        for (i = 0; i < city_blips.length; i++) {
+          cityPositions[i * 2] = city_blips[i].getXpos();
+          cityPositions[i * 2 + 1] = city_blips[i].getYpos();
+        }
 
         let strGuiControls = JSON.stringify(guiControls);
 
-        let saveDataArray = [ Uint16Array.of(sim_res_x), Uint16Array.of(sim_res_y), baseTextureValues, waterTextureValues, wallTextureValues, precipBufferValues, Uint16Array.of(weatherStations.length), weatherStationsPositions, strGuiControls ];
+        let saveDataArray = [ Uint16Array.of(sim_res_x), Uint16Array.of(sim_res_y), 
+                            baseTextureValues, waterTextureValues, wallTextureValues, precipBufferValues,
+                            Uint16Array.of(weatherStations.length), weatherStationsPositions, 
+                            Uint16Array.of(city_blips.length), cityPositions,  
+                            strGuiControls ];
         let blob = new Blob(saveDataArray);        // combine everything into a single blob
         let arrBuff = await blob.arrayBuffer();    // turn into array for pako
         let arr = new Uint8Array(arrBuff);
