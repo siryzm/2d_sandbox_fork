@@ -14,16 +14,9 @@ return cape;
 };
 
 // calculating precipitable water (PWAT)
-const get_pwat = function(H_env){
-var pwat = 0;
-let dZ = 2;
+const get_pwat = function(dewpoint){
+var pwat = (.1*Math.exp((17.269*dewpoint)/(237.3+dewpoint)));
+var pwat_inches = ((pwat*10)/2.54);
 
-for (var i = 0; i < (H_env.length-1); i++){
-let dpwat = (.5*(H_env[i]+H_env[i+1])*dZ);
-if (dpwat < 0){continue};
-
-    pwat += dpwat;
-}; 
-
-return pwat;
+return pwat_inches;
 };

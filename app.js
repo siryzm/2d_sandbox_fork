@@ -30,7 +30,7 @@ const PI = 3.14159265359;
 const degToRad = 0.0174533;
 const radToDeg = 57.2957795;
 
-const saveFileVersionID = 263574036; // Uint32 id to check if save file is compatible
+const saveFileVersionID = 662136126; // Uint32 id to check if save file is compatible
 
 const guiControls_default = {
   vorticity : 0.007,
@@ -121,7 +121,7 @@ const timePerIteration = 0.00008; // (0.00008 = 0.288 sec, at 40m cell size that
 
 var NUM_DROPLETS;
 // NUM_DROPLETS = (sim_res_x * sim_res_y) / NUM_DROPLETS_DEVIDER
-const NUM_DROPLETS_DEVIDER = 25; // 25
+const NUM_DROPLETS_DEVIDER = 1; // 25
 
 function clamp(num, min, max) { return Math.min(Math.max(num, min), max); }
 
@@ -1867,8 +1867,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       var T_parcel = [];
       var T_env = [];
 
-      var H_env = [];
-
       c.fillText('' + printDistance(map_range(simXpos, 0, sim_res_y, 0, guiControls.simHeight / 1000.0)), this.graphCanvas.width - 70, 20);
 
       // Drawing wind barbs
@@ -1962,8 +1960,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         var velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[4 * y], 2) + Math.pow(baseTextureValues[4 * y + 1], 2)));
 
-        let rh = round_number(calculateRelativeHumidity(temp,dewPoint));
-        H_env.push(rh);
+        var rh = round_number(calculateRelativeHumidity(temp,dewPoint));
+        var pwat = get_pwat(dewPoint);
 
         c.font = '15px Arial';
         c.fillStyle = 'white';
@@ -1974,7 +1972,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
           c.fillText('' + printVelocity(velocity), this.graphCanvas.width - 113, scrYpos + 20);
 
-          c.fillText(`RH: ${round_number(rh)}%`,(graphCanvas.width-220),160);
+          c.fillText(`RH: ${rh}%`,(graphCanvas.width-220),160);
+          c.fillText(`PWAT: ${pwat.toFixed(2)}in.`,(graphCanvas.width-220),180);
 
           c.strokeStyle = '#FFF';
           c.lineWidth = 1.0;
@@ -2058,7 +2057,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         c.strokeStyle = '#008800';
 
       c.stroke();
-      c.fillText(`PWAT: ${round_number(get_pwat(H_env))}in.`,(this.graphCanvas.width-220),180);
       c.fillText(`CAPE: ${Math.round(get_cape(T_parcel,T_env))}J/kg`,(graphCanvas.width-220),200);
       
       function T_to_Xpos(T, y)
