@@ -318,8 +318,9 @@ function realToPotentialT(realT, y) { return realT + (y / sim_res_y) * dryLapse;
 
 function potentialToRealT(potentialT, y) { return potentialT - (y / sim_res_y) * dryLapse; }
 
-function round_number(number){
-return Number(number.toPrecision(3));
+function round_number(number,pos){
+var pos = (pos || 10);
+return Number((Math.round(number*pos)/pos).toPrecision(3));
 }
 
 function calculateVaporPressure(temperature) {
@@ -1961,7 +1962,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         var velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[4 * y], 2) + Math.pow(baseTextureValues[4 * y + 1], 2)));
 
-        let rh = calculateRelativeHumidity(temp,dewPoint);
+        let rh = round_number(calculateRelativeHumidity(temp,dewPoint));
         H_env.push(rh);
 
         c.font = '15px Arial';
@@ -2057,7 +2058,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         c.strokeStyle = '#008800';
 
       c.stroke();
-      c.fillText(`PWAT: ${Number(get_pwat(H_env).toPrecision(3))}in.`,(this.graphCanvas.width-220),180);
+      c.fillText(`PWAT: ${round_number(get_pwat(H_env))}in.`,(this.graphCanvas.width-220),180);
       c.fillText(`CAPE: ${Math.round(get_cape(T_parcel,T_env))}J/kg`,(graphCanvas.width-220),200);
       
       function T_to_Xpos(T, y)
