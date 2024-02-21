@@ -117,7 +117,6 @@ var frameBuff_0;
 
 var dryLapse;
 
-
 const timePerIteration = 0.00008; // (0.00008 = 0.288 sec, at 40m cell size that means the speed of light & sound = 138.88 m/s = 500 km/h) in hours
 
 var NUM_DROPLETS;
@@ -319,6 +318,19 @@ function realToPotentialT(realT, y) { return realT + (y / sim_res_y) * dryLapse;
 
 function potentialToRealT(potentialT, y) { return potentialT - (y / sim_res_y) * dryLapse; }
 
+function round_number(number){
+return Number(number.toPrecision(3));
+}
+
+function calculateVaporPressure(temperature) {
+return (6.112*Math.exp((17.67*temperature)/(temperature+243.5)));
+};
+
+function calculateRelativeHumidity(temperature,dewPoint) {
+let vaporPressureTemperature = calculateVaporPressure(temperature);
+let vaporPressureDewPoint = calculateVaporPressure(dewPoint);
+return Math.max(0,((100*vaporPressureDewPoint)/vaporPressureTemperature));
+};
 
 class Weatherstation
 {
@@ -327,14 +339,15 @@ class Weatherstation
   #x; // position in simulation
   #y;
 
-  #font_size = 13;
-  #width = 110; // 70 display size
-  #height = (this.#font_size*(5*1.4));
+  #font_size = 12;
+  #width = 130; // 70 display size
+  #height = (this.#font_size*(6*1.4));
 
   #temperature = 0;
   #dewpoint = 0;
   #velocity = 0;
   #snowfall = 0;
+  #humidity = 0;
   #rainfall = 0;
 
   constructor(xIn, yIn)
@@ -402,20 +415,20 @@ class Weatherstation
     gl.readPixels(this.#x, (ground_level-1), 1, 1, gl.RGBA, gl.FLOAT, snowValues); // read a vertical column of cells
 
     this.#dewpoint = KtoC(dewpoint(waterTextureValues[0]));
-    this.#rainfall += (((waterTextureValues[2]/60)*8.61255)/3);
-    this.#snowfall = snowValues[3];
-
     if (guiControls.realDewPoint) {
       this.#dewpoint = Math.min(this.#temperature, this.#dewpoint);
     }
 
+    this.#humidity = round_number(calculateRelativeHumidity(this.#temperature,this.#dewpoint));
+    this.#rainfall += (((waterTextureValues[2]/60)*8.61255)/4);
+    this.#snowfall = snowValues[3];
+
     if (waterTextureValues[0] > 1110) { // is not air
       this.destroy();                   // remove weather station
     }
-  }
+  };
 
   getXpos() { return this.#x; }
-
   getYpos() { return this.#y; }
 
   updateCanvas()
@@ -463,6 +476,10 @@ class Weatherstation
     // snowfall
     c.fillStyle = 'rgb(255,255,255)';
     set_text((`Snowfall Total: ${printSnowHeight(this.#snowfall)}`),10,(this.#font_size*5));
+
+    // humidity
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text((`Relative Humidity: ${this.#humidity}%`),10,(this.#font_size*6));
 
     // Position pointer
     c.beginPath();
@@ -1849,6 +1866,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       var T_parcel = [];
       var T_env = [];
 
+      var H_env = [];
+
       c.fillText('' + printDistance(map_range(simXpos, 0, sim_res_y, 0, guiControls.simHeight / 1000.0)), this.graphCanvas.width - 70, 20);
 
       // Drawing wind barbs
@@ -1942,6 +1961,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         var velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[4 * y], 2) + Math.pow(baseTextureValues[4 * y + 1], 2)));
 
+        let rh = calculateRelativeHumidity(temp,dewPoint);
+        H_env.push(rh);
+
         c.font = '15px Arial';
         c.fillStyle = 'white';
 
@@ -1951,10 +1973,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
           c.fillText('' + printVelocity(velocity), this.graphCanvas.width - 113, scrYpos + 20);
 
+          c.fillText(`RH: ${round_number(rh)}%`,(graphCanvas.width-220),160);
 
           c.strokeStyle = '#FFF';
           c.lineWidth = 1.0;
-
 
           c.strokeRect(T_to_Xpos(dewPoint, scrYpos) - 10, scrYpos, 10,
                        1); // vertical position indicator
@@ -2035,7 +2057,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         c.strokeStyle = '#008800';
 
       c.stroke();
-      c.fillText(`CAPE: ` + Math.round(get_cape(T_parcel,T_env)) + `J/kg`,(graphCanvas.width-220),160);
+      c.fillText(`PWAT: ${Number(get_pwat(H_env).toPrecision(3))}in.`,(this.graphCanvas.width-220),180);
+      c.fillText(`CAPE: ${Math.round(get_cape(T_parcel,T_env))}J/kg`,(graphCanvas.width-220),200);
       
       function T_to_Xpos(T, y)
       {
