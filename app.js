@@ -121,7 +121,7 @@ const timePerIteration = 0.00008; // (0.00008 = 0.288 sec, at 40m cell size that
 
 var NUM_DROPLETS;
 // NUM_DROPLETS = (sim_res_x * sim_res_y) / NUM_DROPLETS_DEVIDER
-const NUM_DROPLETS_DEVIDER = 1; // 25
+const NUM_DROPLETS_DEVIDER = 25; // 25
 
 function clamp(num, min, max) { return Math.min(Math.max(num, min), max); }
 
