@@ -18,6 +18,10 @@ uniform sampler2D lightTex;
 uniform sampler2D noiseTex;
 uniform sampler2D surfaceTextureMap;
 uniform sampler2D curlTex;
+uniform sampler2D lightningTex;
+uniform sampler2D lightningLocationTex;
+
+uniform vec2 aspectRatios; // [0] Sim       [1] canvas
 
 #define URBAN 0
 #define FIRE_FOREST 1
@@ -33,7 +37,6 @@ uniform float cellHeight; // in meters
 uniform float dryLapse;
 uniform float sunAngle;
 
-uniform float exposure;
 uniform vec3 view;   // Xpos  Ypos    Zoom
 uniform vec4 cursor; // Xpos   Ypos  Size   type
 
@@ -53,6 +56,8 @@ float light;
 
 vec3 color;
 float opacity = 1.0;
+
+vec3 emittedLight = vec3(0.); // pure light, like lightning
 
 
 vec4 surfaceTexture(int index, vec2 pos)
@@ -85,9 +90,64 @@ vec3 getWallColor(float depth)
   return color;
 }
 
+const vec2 lightningTexRes = vec2(2500, 5000);
+const float lightningTexAspect = lightningTexRes.x / lightningTexRes.y;
 
-#define minShadowLight 0.10 // 0.15
+vec3 displayLightning(vec2 pos, float startIterNum)
+{
+  vec2 lightningTexCoord = texCoord;
 
+  lightningTexCoord.x -= mod(pos.x, 1.);
+
+  lightningTexCoord.y -= pos.y;
+
+  float scaleMult = 1. / pos.y; // 1.0 means lightning is as tall as the simheight
+
+
+  lightningTexCoord.x *= scaleMult * aspectRatios[0] / lightningTexAspect;
+  lightningTexCoord.y *= -scaleMult;
+
+  lightningTexCoord.x += 0.5;                                                                                               // center lightning bolt
+
+  if (lightningTexCoord.x < 0.01 || lightningTexCoord.x > 1.01 || lightningTexCoord.y < 0.01 || lightningTexCoord.y > 1.01) // prevent edge effect when mipmapping
+    return vec3(0);
+
+  float pixVal = texture(lightningTex, lightningTexCoord).r;
+
+  float iterNumMod = mod(float(iterNum), 400.); // 300
+
+  iterNumMod = iterNum - startIterNum;
+
+  float lightningTime = iterNumMod / 5.0; // 30.0    0. to 1. leader stage, 1. + Flash stage
+
+  const float branchShowFactor = 1.5;
+  const float leaderBrightness = 200.;
+  const float mainBoltBrightness = 100000.;
+
+  float brightnessThreshold = 1. - lightningTime * branchShowFactor;
+  brightnessThreshold += lightningTexCoord.y * branchShowFactor; // grow from the top to the bottem
+
+  brightnessThreshold = clamp(brightnessThreshold, 0., 1.);
+
+  float lightningIntensity = leaderBrightness;
+
+  if (lightningTime > 1.0) { // main bolt
+    brightnessThreshold = 0.95;
+    lightningIntensity = ((1. / (0.05 + pow((lightningTime - 1.) * 2.0, 3.))) - 0.005) * mainBoltBrightness;
+  }
+
+  pixVal -= brightnessThreshold;
+
+  pixVal = max(pixVal, 0.0);
+
+  pixVal *= lightningIntensity;
+
+  const vec3 lightningCol = vec3(0.70, 0.57, 1.0); // 0.584, 0.576, 1.0
+
+  vec3 outputColor = max(pixVal * lightningCol, vec3(0));
+
+  return outputColor;
+}
 
 void main()
 {
@@ -159,26 +219,38 @@ void main()
 
     // fragmentColor = vec4(vec3(curl * 5.), 1.0);
 
-    float vaporDensity = max(cloudwater * 13.6, 0.0);
+    float cloudDensity = max(cloudwater * 13.6, 0.0);
 
-    vaporDensity += water[PRECIPITATION] * 0.8; // visualize precipitation
+    float totalDensity = cloudDensity + water[PRECIPITATION] * 0.8; // visualize precipitation
 
     // float cloudOpacity = clamp(cloudwater * 4.0, 0.0, 1.0);
-    float cloudOpacity = clamp(1.0 - (1.0 / (1. + vaporDensity)), 0.0, 1.0);
+    float cloudOpacity = clamp(1.0 - (1.0 / (1. + totalDensity)), 0.0, 1.0);
 
     const vec3 smokeThinCol = vec3(0.8, 0.51, 0.26);
     const vec3 smokeThickCol = vec3(0., 0., 0.);
-    const vec3 fireCol = vec3(1.0, 0.7, 0.0);
+    const vec3 fireCol = vec3(1.0, 0.7, 0.0) * 10.0;
 
     float smokeOpacity = clamp(1. - (1. / (water[SMOKE] + 1.)), 0.0, 1.0);
     float fireIntensity = clamp((smokeOpacity - 0.8) * 25., 0.0, 1.0);
     vec3 smokeCol = mix(mix(smokeThinCol, smokeThickCol, smokeOpacity), fireCol, fireIntensity);
 
-    shadowLight += fireIntensity;
+    shadowLight += fireIntensity * 1.5;
 
     opacity = 1. - (1. - smokeOpacity) * (1. - cloudOpacity);                                                // alpha blending
     color = (smokeCol * smokeOpacity / opacity) + (cloudCol * cloudOpacity * (1. - smokeOpacity) / opacity); // color blending
-    opacity = clamp(opacity, 0.0, 1.0);
+
+
+    vec2 lightningPos = vec2(0.3, 0.3);
+    float lightningStartIterNum = 100.;
+
+    vec4 lightningLocation = texture(lightningLocationTex, vec2(0.5));
+    lightningPos = lightningLocation.xy;
+    lightningStartIterNum = lightningLocation.z;
+
+    emittedLight += displayLightning(lightningPos, lightningStartIterNum); // needs to be added as light
+
+    emittedLight /= 1. + cloudDensity * 100.0;
+
 
     if (wall[VERT_DISTANCE] >= 0 && wall[VERT_DISTANCE] < 10) { // near surface
       float localX = fract(fragCoord.x);
@@ -244,7 +316,7 @@ void main()
         if (wallX0Ym[TYPE] == WALLTYPE_LAND || wallX0Ym[TYPE] == WALLTYPE_URBAN) { // land below
           float snow = texture(waterTex, texCoordX0Ym)[SNOW];                      // snow on land below
           if (snow * 0.01 / cellHeight > heightAboveGround)
-            texCol = vec4(1);                                                      // show white snow
+            texCol = vec4(vec3(1.), 1.);                                           // show white snow layer above ground
           else
             texCol = mix(surfaceTexture(FOREST, vec2(treeTexCoordX, treeTexCoordY)), surfaceTexture(SNOW_FOREST, vec2(treeTexCoordX, treeTexCoordY)), min(snow / fullWhiteSnowHeight, 1.0));
         } else if (wallX0Ym[TYPE] == WALLTYPE_FIRE) {
@@ -302,7 +374,6 @@ void main()
 
   float scatering = clamp(map_range(abs(sunAngle), 75. * deg2rad, 90. * deg2rad, 0., 1.), 0., 1.); // how red the sunlight is
 
-  light = pow(light, 1. / 2.2);                                                                    // gamma correction
   vec3 finalLight = sunColor(scatering) * light;
 
 
@@ -315,13 +386,9 @@ void main()
 
   finalLight += vec3(shadowLight);
 
-  fragmentColor = vec4(clamp(color * finalLight * exposure, 0., 1.), opacity);
+  opacity += length(emittedLight);
+  opacity = clamp(opacity, 0.0, 1.0);
+  fragmentColor = vec4(max(color * finalLight, 0.) + emittedLight, opacity);
 
-
-  // vec2 uv = vec2(texCoord.x * texelSize.y / texelSize.x, texCoord.y);
-  // uv *= 10.;
-  // fragmentColor = vec4(vec3(func2D(uv)), 1.0);
-
-
-  drawCursor(); // over everything else
+  drawCursor(cursor, view); // over everything else
 }
