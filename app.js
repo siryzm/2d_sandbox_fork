@@ -545,7 +545,9 @@ class Weatherstation
     }
 
     this.#humidity = round_number(calculateRelativeHumidity(this.#temperature,this.#dewpoint));
-    this.#rainfall += (((waterTextureValues[2]/60)*8.61255)/4);
+    if (!guiControls.paused){
+      this.#rainfall += (((waterTextureValues[2]/60)/24)/10);
+    };
     this.#snowfall = snowValues[3];
 
     if (waterTextureValues[0] > 1110) { // is not air
