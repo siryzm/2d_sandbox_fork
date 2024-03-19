@@ -2053,7 +2053,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           c.strokeStyle = '#FFF';
           c.lineWidth = 1.0;
 
-
           c.strokeRect(T_to_Xpos(dewPoint, scrYpos) - 10, scrYpos, 10,
                        1); // vertical position indicator
           c.fillText('' + printTemp(dewPoint), T_to_Xpos(dewPoint, scrYpos) - 70, scrYpos + 5);
@@ -2063,7 +2062,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       }
 
       c.lineWidth = 2.0; // 3
-      c.strokeStyle = '#0055FF';
+      c.strokeStyle = '#00FF00';
       c.stroke();
 
       // Draw rising parcel temperature line
@@ -2077,14 +2076,17 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       var prevCloudWater = initialCloudWater;
 
       var drylapsePerCell = ((-1.0 / sim_res_y) * guiControls.simHeight * guiControls.dryLapseRate) / 1000.0;
+      var dot_num = 0;
 
       reachedSaturation = false;
 
       c.beginPath();
       var scrYpos = map_range(simYpos, sim_res_y, 0, 0, graphBottem);
       c.moveTo(T_to_Xpos(KtoC(initialTemperature), scrYpos), scrYpos);
+
       for (var y = simYpos + 1; y < sim_res_y; y++) {
         var dT = drylapsePerCell;
+          dot_num += 1;
 
         var cloudWater = max(water - maxWater(prevTemp + dT),
                              0.0); // how much cloud water there would be after that
@@ -2100,6 +2102,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         var scrYpos = map_range(y, sim_res_y, 0, 0, graphBottem);
 
         c.lineTo(T_to_Xpos(KtoC(T), scrYpos), scrYpos); // temperature
+        c.setLineDash([5,3]);
         T_parcel.push(KtoC(T));
 
         prevTemp = T;
@@ -2107,32 +2110,34 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         if (!reachedSaturation && prevCloudWater > 0.0) {
           reachedSaturation = true;
-          c.strokeStyle = '#008800'; // dark green for dry lapse rate
+          c.strokeStyle = '#616161'; // dark green for dry lapse rate
           c.stroke();
 
           if (y - simYpos > 5) {
             c.beginPath();
+            c.setLineDash([0,0]);
             c.moveTo(T_to_Xpos(KtoC(T), scrYpos) - 0, scrYpos); // temperature
             c.lineTo(T_to_Xpos(KtoC(T), scrYpos) + 40,
-                     scrYpos);                                  // Horizontal ceiling line
+                    scrYpos);                                  // Horizontal ceiling line
             c.strokeStyle = '#FFFFFF';
             c.stroke();
             c.fillText('' + printAltitude(Math.round(map_range(y - 1, 0, sim_res_y, 0, guiControls.simHeight))), T_to_Xpos(KtoC(T), scrYpos) + 50, scrYpos + 5);
           }
 
-          c.beginPath();
-          c.moveTo(T_to_Xpos(KtoC(T), scrYpos), scrYpos); // temperature
+        c.beginPath();
+        c.moveTo(T_to_Xpos(KtoC(T), scrYpos), scrYpos); // temperature
         }
       }
 
       c.lineWidth = 2.0;           // 3
       if (reachedSaturation) {
-        c.strokeStyle = '#00FF00'; // light green for saturated lapse rate
+        c.strokeStyle = '#FFFFFF'; // light green for saturated lapse rate
       } else
-        c.strokeStyle = '#008800';
+        c.strokeStyle = '#616161';
 
       c.stroke();
       c.fillText(`CAPE: ${Math.round(get_cape(T_parcel,T_env))}J/kg`,(graphCanvas.width-220),200);
+      c.setLineDash([0,0]);
 
       function T_to_Xpos(T, y)
       {
@@ -2143,8 +2148,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
       function drawIsotherms()
       {
-        c.strokeStyle = '#964B00';
+        c.strokeStyle = '#C0C0C0';
         c.beginPath();
+        c.setLineDash([5,3]);
         c.fillStyle = 'white';
 
         for (var T = -80.0; T <= 50.0; T += 10.0) {
@@ -2154,14 +2160,23 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           if (T >= -30.0)
             c.fillText(printTemp(Math.round(T)), T_to_Xpos(T, graphBottem) - 20, this.graphCanvas.height - 5);
         }
-        c.lineWidth = 1.0;
+
+        c.lineWidth = .5;
         c.stroke();
-        // draw 0 degree line thicker
+
+        // drawing dendritic growth zone
         c.beginPath();
-        c.moveTo(T_to_Xpos(0, graphBottem), graphBottem);
-        c.lineTo(T_to_Xpos(0, 0), 0);
-        c.lineWidth = 3.0;
-        c.stroke();
+        c.strokeStyle = '#0000FF';
+
+        for (var i = -20; i <= 0; i += 20) {
+          c.moveTo(T_to_Xpos(i, graphBottem), graphBottem);
+          c.lineTo(T_to_Xpos(i, 0), 0);
+
+          c.lineWidth = 1;
+          c.stroke();
+        };
+
+        c.setLineDash([0,0]);
       }
     }, // end of draw()
   };
