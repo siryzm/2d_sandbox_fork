@@ -464,9 +464,9 @@ class Weatherstation
   #x; // position in simulation
   #y;
 
-  #font_size = 12;
+  #font_size = 10;
   #width = 130; // 70 display size
-  #height = (this.#font_size*(7*1.4));
+  #height = ((this.#font_size*7)*1.3);
 
   #temperature = 0;
   #dewpoint = 0;
@@ -601,31 +601,31 @@ class Weatherstation
 
     // temperature
     c.fillStyle = get_gradient(gradients.temps,temp_lock);
-    set_text((`Temperature: ${printTemp(this.#temperature)}`),10,this.#font_size);
+    set_text((`Temperature: ${printTemp(this.#temperature)}`),0,this.#font_size);
 
     // dew point
     c.fillStyle = get_gradient(gradients.dews,dew_lock);
-    set_text('Dewpoint: ' + printTemp(this.#dewpoint),10,(this.#font_size*2));
+    set_text('Dewpoint: ' + printTemp(this.#dewpoint),0,(this.#font_size*2));
 
     // velocity
     c.fillStyle = 'rgb(255,255,255)';
-    set_text('Winds: ' + printVelocity(this.#velocity),10,(this.#font_size*3));
+    set_text('Winds: ' + printVelocity(this.#velocity),0,(this.#font_size*3));
   
     // rainfall
     c.fillStyle = get_gradient(gradients.rainfall,this.#rainfall);
-    set_text('Precip Total: ' + printRainfall(this.#rainfall),10,(this.#font_size*4));
+    set_text('Precip Total: ' + printRainfall(this.#rainfall),0,(this.#font_size*4));
 
     // snowfall
     c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Snowfall Total: ${printSnowHeight(this.#snowfall)}`),10,(this.#font_size*5));
+    set_text((`Snowfall Total: ${printSnowHeight(this.#snowfall)}`),0,(this.#font_size*5));
 
     // snowfall
     c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Snowfall Rate: ${printSnowHeight(this.#snowfall_rate)}/hr`),10,(this.#font_size*6));
+    set_text((`Snowfall Rate: ${printSnowHeight(this.#snowfall_rate)}/hr`),0,(this.#font_size*6));
 
     // humidity
     c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Relative Humidity: ${this.#humidity}%`),10,(this.#font_size*7));
+    set_text((`Relative Humidity: ${this.#humidity}%`),0,(this.#font_size*7));
 
     // Position pointer
     c.beginPath();
