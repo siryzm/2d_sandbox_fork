@@ -83,7 +83,7 @@ const guiControls_default = {
   paused : false,
   IterPerFrame : 2,
   auto_IterPerFrame : false,
-  dryLapseRate : 10.0,   // Real: 9.81 degrees / km
+  dryLapseRate : 9.81,   // Real: 9.81 degrees / km
   simHeight : 12000,     // 12000 meters
   imperialUnits : true, // only for display.  false = metric
 };
@@ -118,7 +118,6 @@ var IterNum = 0;
 var frameBuff_0;
 
 var dryLapse;
-
 
 const timePerIteration = 0.00008; // in hours (0.00008 = 0.288 sec, at 40m cell size that means the speed of light & sound = 138.88 m/s = 500 km/h)
 
@@ -467,14 +466,17 @@ class Weatherstation
 
   #font_size = 12;
   #width = 130; // 70 display size
-  #height = (this.#font_size*(6*1.4));
+  #height = (this.#font_size*(7*1.4));
 
   #temperature = 0;
   #dewpoint = 0;
   #velocity = 0;
-  #snowfall = 0;
   #humidity = 0;
   #rainfall = 0;
+
+  #snowfall = 0;
+  #snowfall_rate = 0;
+  #time = this.get_cur_time();
 
   constructor(xIn, yIn)
   {
@@ -546,9 +548,20 @@ class Weatherstation
 
     this.#humidity = round_number(calculateRelativeHumidity(this.#temperature,this.#dewpoint));
     if (!guiControls.paused){
-      this.#rainfall += ((waterTextureValues[2]/60)/24);
+    var rate = ((waterTextureValues[2]/60)/24);
+    
+    if (this.#temperature > 0){
+      this.#rainfall += rate;
+    } else;
+      this.#snowfall_rate += rate;
     };
     this.#snowfall = snowValues[3];
+
+    var cur_time = this.get_cur_time();
+    if ((cur_time-this.#time) > (1000*60*60)){
+      this.#time = cur_time;
+      this.#snowfall_rate = 0;
+    };
 
     if (waterTextureValues[0] > 1110) { // is not air
       this.destroy();                   // remove weather station
@@ -556,8 +569,9 @@ class Weatherstation
   }
 
   getXpos() { return this.#x; }
-
   getYpos() { return this.#y; }
+  get_cur_time(){return simDateTime.getTime()};
+  set_time(){this.#time = this.get_cur_time()};
 
   updateCanvas()
   {
@@ -605,9 +619,13 @@ class Weatherstation
     c.fillStyle = 'rgb(255,255,255)';
     set_text((`Snowfall Total: ${printSnowHeight(this.#snowfall)}`),10,(this.#font_size*5));
 
+    // snowfall
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text((`Snowfall Rate: ${printSnowHeight(this.#snowfall_rate)}/hr`),10,(this.#font_size*6));
+
     // humidity
     c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Relative Humidity: ${this.#humidity}%`),10,(this.#font_size*6));
+    set_text((`Relative Humidity: ${this.#humidity}%`),10,(this.#font_size*7));
 
     // Position pointer
     c.beginPath();
@@ -1634,7 +1652,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     var radiation_folder = datGui.addFolder('Radiation');
 
-    radiation_folder.add(guiControls, 'timeOfDay', 0.0, 23.96, 0.01).onChange(onUpdateTimeOfDaySlider).name('Time of day').listen();
+    radiation_folder.add(guiControls, 'timeOfDay', 0.0, 23.96, 0.01).onChange(onUpdateTimeOfDaySlider).name('Time of day').listen(true);
 
     radiation_folder.add(guiControls, 'dayNightCycle').name('Day/Night Cycle').listen();
 
@@ -4396,8 +4414,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     return timeStr + '&nbsp; ' + monthStr;
   }
 
-  function onUpdateTimeOfDaySlider()
+  function onUpdateTimeOfDaySlider(upd_stations)
   {
+    if (upd_stations){
+    for (i = 0; i < weatherStations.length; i++) {
+      weatherStations[i].set_time();
+      };
+    };
     let minutes = (guiControls.timeOfDay % 1) * 60;
     simDateTime.setHours(guiControls.timeOfDay, minutes);
     updateSunlight();
