@@ -40,8 +40,8 @@ function generateLightningBolt(width, height)
 
   while (startY < height) {
 
-    const nextX = startX + Math.sin(angle);
-    const nextY = startY + Math.cos(angle);
+    const nextX = startX + (Math.sin(angle)*bolt_x_spread);
+    const nextY = startY + (Math.cos(angle)*bolt_y_size);
 
     angle += (Math.random() - 0.5) * .7;  // 0.7
 
