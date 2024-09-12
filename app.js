@@ -35,30 +35,30 @@ const radToDeg = 57.2957795;
 const saveFileVersionID = 263574036; // Uint32 id to check if save file is compatible
 
 const guiControls_default = {
-  vorticity : 0.007,
+  vorticity : 0.005,
   dragMultiplier : 0.01, // 0.1
   wind : -0.0001,
   globalEffectsHeight : 10000,
-  globalDrying : 0.00000, // 0.00001
+  globalDrying : 0.000003, // 0.000010
   globalHeating : 0.0,
   sunIntensity : 1.0,
-  waterTemperature : 25, // only in degrees C, sorry Americans
+  waterTemperature : 25.0, // °C
   landEvaporation : 0.00005,
   waterEvaporation : 0.0001,
-  evapHeat : 1.9,           // 1.9    Real: 2260 J/g
-  meltingHeat : 0.6,        // 0.281  Real:  334 J/g
-  waterWeight : 0.5,        // 0.50
+  evapHeat : 2.0,           //  Real: 2260 J/g
+  meltingHeat : 0.3,        //  Real:  334 J/g
+  waterWeight : 0.50,       // 0.50
   inactiveDroplets : 0,
   aboveZeroThreshold : 1.0, // PRECIPITATION
-  subZeroThreshold : 0.00,  // 0.01
-  spawnChance : 0.00002,    // 30. 10 to 50
+  subZeroThreshold : 0.005, // 0.01
+  spawnChance : 0.00005,    // 30. 10 to 50
   snowDensity : 0.2,        // 0.3
   fallSpeed : 0.0003,
   growthRate0C : 0.0001,    // 0.0005
   growthRate_30C : 0.001,   // 0.01
-  freezingRate : 0.0025,
-  meltingRate : 0.0025,
-  evapRate : 0.0005,
+  freezingRate : 0.01,
+  meltingRate : 0.01,
+  evapRate : 0.0008, // 0.0005
   displayMode : 'DISP_REAL',
   wrapHorizontally : true,
   SmoothCam : true,
@@ -83,8 +83,8 @@ const guiControls_default = {
   paused : false,
   IterPerFrame : 2,
   auto_IterPerFrame : false,
-  dryLapseRate : 9.81,   // Real: 9.81 degrees / km
-  simHeight : 12000,     // 12000 meters
+  dryLapseRate : 9.81,   // Real: 9.8 degrees / km
+  simHeight : 12000,     // meters
   imperialUnits : true, // only for display.  false = metric
 };
 
@@ -93,6 +93,8 @@ var horizontalDisplayMult = 3.0; // 3.0 to cover srceen while zoomed out
 var guiControls;
 
 var displayVectorField = false;
+
+var displayWeatherStations = true;
 
 var sunIsUp = true;
 
@@ -118,6 +120,7 @@ var IterNum = 0;
 var frameBuff_0;
 
 var dryLapse;
+
 
 const timePerIteration = 0.00008; // in hours (0.00008 = 0.288 sec, at 40m cell size that means the speed of light & sound = 138.88 m/s = 500 km/h)
 
@@ -203,9 +206,12 @@ function min(num1, num2)
 
 // Temperature Functions
 
-function CtoK(c) { return c + 273.15; }
+function CtoK(C) { return C + 273.15; }
 
-function KtoC(k) { return k - 273.15; }
+function KtoC(K) { return K - 273.15; }
+
+function CtoF(C) { return C * 1.8 + 32.0; }
+
 
 function dT_saturated(dTdry, dTl)
 {
@@ -252,28 +258,33 @@ function dewpoint(W)
 function relativeHumd(T, W) { return (W / maxWater(T)) * 100.0; }
 
 function round_number(number,pos){
-var pos = (pos || 10);
-  return Number((Math.round(number*pos)/pos).toPrecision(3));
-}
+  var pos = (pos || 10);
+    return Number((Math.round(number*pos)/pos).toPrecision(3));
+  }
+  
+  function round(number){
+    return (Math.round(number*10)/10);
+    };  
 
-function round(number){
-  return (Math.round(number*10)/10);
-  };  
+function calculateVaporPressure(temperature) {
+  return (6.112*Math.exp((17.67*temperature)/(temperature+243.5)));
+};
+  
+function calculateRelativeHumidity(temperature,dewPoint) {
+let vaporPressureTemperature = calculateVaporPressure(temperature);
+let vaporPressureDewPoint = calculateVaporPressure(dewPoint);
+  return Math.max(0,((100*vaporPressureDewPoint)/vaporPressureTemperature));
+};
 
 // Print funtions:
 
 function printTemp(tempC)
 {
   if (guiControls.imperialUnits) {
-    let tempF = tempC * 1.8 + 32.0;
-    return tempF.toFixed(1) + '°F';
+    return CtoF(tempC).toFixed(1) + '°F';
   } else
     return tempC.toFixed(1) + '°C';
 }
-
-function printRainfall(amount){
-  return (guiControls.imperialUnits) && (round(amount) + ' in.') || (round(amount*25.4) + ' mm.');
-};
 
 function printSnowHeight(snowHeight_cm)
 {
@@ -281,8 +292,18 @@ function printSnowHeight(snowHeight_cm)
     let snowHeight_inches = snowHeight_cm * 0.393701;
     return snowHeight_inches.toFixed(1) + '"'; // inches
   } else
-    return snowHeight_cm.toFixed(0) + ' cm';
+    return snowHeight_cm.toFixed(1) + ' cm';
 }
+
+function printSoilMoisture(soilMoisture_mm)
+{
+  if (guiControls.imperialUnits) {
+    let soilMoisture_inches = soilMoisture_mm * 0.0393701;
+    return soilMoisture_inches.toFixed(1) + '"'; // inches
+  } else
+    return soilMoisture_mm.toFixed(1) + ' mm';
+}
+
 
 function printDistance(km)
 {
@@ -315,7 +336,7 @@ function printVelocity(ms)
   return speedStr + '  ' + ms.toFixed() + ' m/s';
 }
 
-function rawVelocityToMs(vel)
+function rawVelocityTo_ms(vel)
 {                          // Raw velocity is in cells/iteration
   vel /= timePerIteration; // convert to cells per hour
   vel *= cellHeight;       // convert to meters per hour
@@ -329,15 +350,6 @@ function realToPotentialT(realT, y) { return realT + (y / sim_res_y) * dryLapse;
 
 function potentialToRealT(potentialT, y) { return potentialT - (y / sim_res_y) * dryLapse; }
 
-function calculateVaporPressure(temperature) {
-  return (6.112*Math.exp((17.67*temperature)/(temperature+243.5)));
-};
-  
-function calculateRelativeHumidity(temperature,dewPoint) {
-let vaporPressureTemperature = calculateVaporPressure(temperature);
-let vaporPressureDewPoint = calculateVaporPressure(dewPoint);
-  return Math.max(0,((100*vaporPressureDewPoint)/vaporPressureTemperature));
-};
 
 // Global Classes:
 
@@ -460,35 +472,45 @@ function createBloomFBOs()
 class Weatherstation
 {
   #canvas;
+  #mainDiv;
   #c; // 2d canvas context
   #x; // position in simulation
   #y;
 
   #font_size = 10;
   #width = 130; // 70 display size
-  #height = ((this.#font_size*7)*1.3);
+  #height = ((this.#font_size*6)*1.3);
 
-  #temperature = 0;
-  #dewpoint = 0;
-  #velocity = 0;
+  #time;             // ISO time string of moment of last measurement
+  #temperature = 0;  // °C
+  #dewpoint = 0;     // °C
+  #velocity = 0;     // ms
   #humidity = 0;
-  #rainfall = 0;
+  #soilMoisture = 0; // mm
+  #snowHeight = 0;   // cm
 
-  #snowfall = 0;
-  #snowfall_rate = 0;
-  #time = this.get_cur_time();
+  #chartCanvas;
+  #historyChart;
+
 
   constructor(xIn, yIn)
   {
     this.#x = Math.floor(xIn);
     this.#y = Math.floor(yIn);
+    this.#mainDiv = document.createElement('div');
     this.#canvas = document.createElement('canvas');
-    document.body.appendChild(this.#canvas);
+    this.#mainDiv.appendChild(this.#canvas);
+    document.body.appendChild(this.#mainDiv);
     this.#canvas.height = this.#height;
     this.#canvas.width = this.#width;
+
+    this.#mainDiv.style.position = 'absolute';
+    this.#mainDiv.style.width = '0px';
+    this.#mainDiv.style.height = '0px';
+
     this.#c = this.#canvas.getContext('2d');
 
-    this.#canvas.style.position = "absolute";
+    this.#canvas.style.position = 'absolute';
     this.#canvas.style.zIndex = 1; // z-index
 
     let thisObj = this;
@@ -496,12 +518,198 @@ class Weatherstation
       if (guiControls.tool == 'TOOL_STATION') {
         thisObj.destroy();       // remove weather station
         event.stopPropagation(); // prevent mousedown on body from firing
+      } else {
+        if (guiControls.dayNightCycle == true) {
+          thisObj.#chartCanvas.style.display = (thisObj.#chartCanvas.style.display == 'none') ? 'block' : 'none'; // toggle visibility of chart canvas
+        }
+      }
+    });
+
+    /*
+        this.#canvas.addEventListener('mouseover', function(event) {
+          // if (thisObj.#historyChart)
+          //   thisObj.#chartCanvas.style.display = true ? "none" : "block";
+
+          // else {
+          //    thisObj.#historyChart.clear();
+          //    console.log("Cleared chart");
+          //  }
+        });
+    */
+
+    this.createChartJSCanvas();
+  }
+
+  createChartJSCanvas()
+  {
+    this.#chartCanvas = document.createElement('canvas');
+
+    this.#mainDiv.appendChild(this.#chartCanvas);
+
+    const ctx = this.#chartCanvas.getContext('2d');
+
+    this.#chartCanvas.height = 400;
+    this.#chartCanvas.width = 500;
+
+    let style = this.#chartCanvas.style;
+
+    style.marginTop = '100px';
+    // this.#chartCanvas.style.marginRight = '1000px';
+
+    style.position = 'relative';
+
+    style.left = '-200px';
+
+    style.display = 'none'; // hide initially
+
+    // this.#chartCanvas.style.position = "absolute";
+
+    // let screenY = simToScreenY(this.#y) - this.#height; // error because main canvas not yet initialized
+
+    // Create a new Line Chart with time-based labels
+
+
+    this.#historyChart = new Chart(ctx, {
+      type : 'line',
+      data : {
+        labels : [], // Time-based labels
+        datasets : [
+          {
+            label : 'Temperature',
+            data : [], // Data points
+            backgroundColor : 'rgba(255, 0, 0, 0.9)',
+            borderColor : 'rgba(255, 0, 0, 1)',
+            radius : 0,
+            borderWidth : 1,
+            fill : false,
+          },
+          {
+            label : 'Dew Point',
+            data : [], // Data points
+            backgroundColor : '#00FFFF',
+            borderColor : '#00FFFF',
+            radius : 0,
+            borderWidth : 1,
+            fill : false,
+          },
+          {
+            label : 'Wind Speed',
+            data : [], // Data points
+            backgroundColor : '#AAAAAA',
+            borderColor : '#AAAAAA',
+            radius : 0,
+            borderWidth : 1,
+            fill : false,
+            hidden : true
+          },
+          {
+            label : 'Precipitation',
+            data : [], // Data points
+            backgroundColor : '#0055FF',
+            borderColor : '#0055FF',
+            radius : 0,
+            borderWidth : 1,
+            fill : false,
+            hidden : true
+          },
+          {
+            label : 'Snow Height',
+            data : [], // Data points
+            backgroundColor : '#FFFFFF',
+            borderColor : '#FFFFFF',
+            radius : 0,
+            borderWidth : 1,
+            fill : false,
+            hidden : true
+          }
+        ]
+      },
+      options : {
+        scales : {
+          x : {
+            type : 'time', // Set the x-axis to use a time scale
+            time : {unit : 'minute', tooltipFormat : 'HH:mm'},
+            title : {
+              display : true,
+              color : 'white' // Make sure title color is white
+            },
+            ticks : {
+              color : 'white' // White color for the x-axis labels
+            },
+            grid : {
+              color : 'rgba(255, 255, 255, 0.2)' // Optional: light white for grid lines
+            }
+          },
+          y : {
+            beginAtZero : false, // Start the y-axis at 0
+            ticks : {
+              color : 'white'    // White color for the y-axis labels
+            },
+            title : {
+              display : true,
+              color : 'white' // Make sure title color is white
+            },
+            grid : {
+              color : 'rgba(255, 255, 255, 0.2)' // Optional: light white for grid lines
+            }
+          }
+        },
+        plugins : {
+          legend : {
+            display : true,
+            labels : {
+              color : 'white', // White color for legend text
+              font : {
+                size : 14,
+                family : 'Arial' // Optional: Ensure font family is set
+              }
+            }
+          }
+        },
+        responsive : false, // Auto rescale on canvas resize
+        maintainAspectRatio : false,
+        animation : false,  // Disables all animations
+        normalized : true
+        // parsing : false
       }
     });
   }
 
+  updateChartJS() // add newest measurement to chart
+  {
+    if (this.#historyChart) {
+      this.#historyChart.data.datasets[0].data.push(guiControls.imperialUnits ? CtoF(this.#temperature) : this.#temperature);
+      this.#historyChart.data.datasets[1].data.push(guiControls.imperialUnits ? CtoF(this.#dewpoint) : this.#dewpoint);
+      this.#historyChart.data.datasets[2].data.push(this.#velocity);
+      this.#historyChart.data.datasets[3].data.push(this.#soilMoisture);
+      this.#historyChart.data.datasets[4].data.push(this.#snowHeight);
+
+      this.#historyChart.data.labels.push(this.#time);
+
+      if (this.#historyChart.data.labels.length > 60 * 24) { // max 24 hour history. Remove the oldest data and label
+        this.#historyChart.data.labels.shift();
+        this.#historyChart.data.datasets.forEach(dataSet => { dataSet.data.shift(); });
+      }
+
+      if (guiControls.dayNightCycle == true) {
+        if (this.#chartCanvas.style.display != 'none')
+          this.#historyChart.update();
+      } else {
+        this.#chartCanvas.style.display = 'none';
+      }
+    }
+  }
+
+  clearChart()
+  {
+    this.#historyChart.data.datasets.forEach(dataSet => { dataSet.data = []; });
+    this.#historyChart.data.labels = [];
+    this.#historyChart.update();
+  }
+
   destroy()
   {
+    this.#chartCanvas.remove();
     this.#canvas.parentElement.removeChild(this.#canvas); // remove canvas element
     let index = weatherStations.indexOf(this);
     weatherStations.splice(index, 1);                     // remove object from array
@@ -514,64 +722,44 @@ class Weatherstation
     var baseTextureValues = new Float32Array(4);
     gl.readPixels(this.#x, this.#y, 1, 1, gl.RGBA, gl.FLOAT, baseTextureValues);
 
-    gl.readBuffer(gl.COLOR_ATTACHMENT2);
-    var wallTextureValues = new Int32Array(4 * sim_res_y);
-    gl.readPixels(this.#x, 0, 1, sim_res_y, gl.RGBA_INTEGER, gl.INT, wallTextureValues); // read a vertical column of cells
-
-    var ground_level = 0;
-    var in_air = false;
-
-    for (var y = 0; y < sim_res_y; y++) {
-    if (wallTextureValues[4 * y + 1] != 0) { // if this is fluid cell
-        if (!in_air) {
-          // first non wall cell
-          in_air = true;
-          ground_level = y;
-        }}};
-
-    gl.readBuffer(gl.COLOR_ATTACHMENT1); // watertexture
-    var snowValues = new Float32Array(4);
-    gl.readPixels(this.#x, (ground_level-1), 1, 1, gl.RGBA, gl.FLOAT, snowValues); // read a vertical column of cells
-
     this.#temperature = KtoC(potentialToRealT(baseTextureValues[3], this.#y));
-    this.#velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[0], 2) + Math.pow(baseTextureValues[1], 2)));
+    this.#velocity = rawVelocityTo_ms(Math.sqrt(Math.pow(baseTextureValues[0], 2) + Math.pow(baseTextureValues[1], 2)));
 
     // gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuff_0);
     gl.readBuffer(gl.COLOR_ATTACHMENT1); // watertexture
-    var waterTextureValues = new Float32Array(4);
-    gl.readPixels(this.#x, this.#y, 1, 1, gl.RGBA, gl.FLOAT, waterTextureValues);
+    var waterTextureValues = new Float32Array(2 * 4);
+    gl.readPixels(this.#x, this.#y - 1, 1, 2, gl.RGBA, gl.FLOAT, waterTextureValues);
 
-    this.#dewpoint = KtoC(dewpoint(waterTextureValues[0]));
+    this.#dewpoint = KtoC(dewpoint(waterTextureValues[4 + 0]));
+
     if (guiControls.realDewPoint) {
       this.#dewpoint = Math.min(this.#temperature, this.#dewpoint);
     }
 
     this.#humidity = round_number(calculateRelativeHumidity(this.#temperature,this.#dewpoint));
-    if (!guiControls.paused){
-    var rate = ((waterTextureValues[2]/60)/24);
-    
-    if (this.#temperature > 0){
-      this.#rainfall += rate;
-    } else;
-      this.#snowfall_rate += rate;
-    };
-    this.#snowfall = snowValues[3];
 
-    var cur_time = this.get_cur_time();
-    if ((cur_time-this.#time) > (1000*60*60)){
-      this.#time = cur_time;
-      this.#snowfall_rate = 0;
-    };
-
-    if (waterTextureValues[0] > 1110) { // is not air
-      this.destroy();                   // remove weather station
+    if (waterTextureValues[0] > 1110) { // surface below
+      this.#soilMoisture = waterTextureValues[2];
+      this.#snowHeight = waterTextureValues[3];
+    } else {
+      this.#soilMoisture = 0;
+      this.#snowHeight = 0;
     }
+
+    if (waterTextureValues[4 + 0] > 1110) { // is not air
+      this.destroy();                       // remove weather station
+    }
+
+    this.#time = simDateTime.toISOString();
+    // console.log('measurement at: ', this.#time);
+    this.updateChartJS(); // update chart
   }
 
   getXpos() { return this.#x; }
+
   getYpos() { return this.#y; }
-  get_cur_time(){return simDateTime.getTime()};
-  set_time(){this.#time = this.get_cur_time()};
+
+  setHidden(hidden) { this.#mainDiv.style.display = hidden ? "none" : "block"; }
 
   updateCanvas()
   {
@@ -579,9 +767,10 @@ class Weatherstation
     let screenY = simToScreenY(this.#y) - this.#height;
 
     // if (screenX > 0 && screenX < canvas.width && screenY > 0 && screenY < canvas.height) {
-
-    this.#canvas.style.left = screenX + 'px';
-    this.#canvas.style.top = screenY + 'px';
+    this.#mainDiv.style.left = screenX + 'px';
+    this.#mainDiv.style.top = screenY + 'px';
+    // this.#canvas.style.left = screenX + 'px';
+    // this.#canvas.style.top = screenY + 'px';
     let c = this.#c;
     c.clearRect(0, 0, this.#width, this.#height);
     c.fillStyle = '#00000000';
@@ -607,25 +796,21 @@ class Weatherstation
     c.fillStyle = get_gradient(gradients.dews,dew_lock);
     set_text('Dewpoint: ' + printTemp(this.#dewpoint),0,(this.#font_size*2));
 
-    // velocity
-    c.fillStyle = 'rgb(255,255,255)';
-    set_text('Winds: ' + printVelocity(this.#velocity),0,(this.#font_size*3));
-  
-    // rainfall
-    c.fillStyle = get_gradient(gradients.rainfall,this.#rainfall);
-    set_text('Precip Total: ' + printRainfall(this.#rainfall),0,(this.#font_size*4));
-
-    // snowfall
-    c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Snowfall Total: ${printSnowHeight(this.#snowfall)}`),0,(this.#font_size*5));
-
-    // snowfall
-    c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Snowfall Rate: ${printSnowHeight(this.#snowfall_rate)}/hr`),0,(this.#font_size*6));
-
     // humidity
     c.fillStyle = 'rgb(255,255,255)';
-    set_text((`Relative Humidity: ${this.#humidity}%`),0,(this.#font_size*7));
+    set_text((`Relative Humidity: ${this.#humidity}%`),0,(this.#font_size*3));
+
+    // velocity
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text('Winds: ' + printVelocity(this.#velocity),0,(this.#font_size*4));
+
+    // soil moisture
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text((`💧 ${printSoilMoisture(this.#soilMoisture)}`),0,(this.#font_size*5));
+
+    // snow height moisture
+    c.fillStyle = 'rgb(255,255,255)';
+    set_text((`❄ ${printSnowHeight(this.#snowHeight)}`),0,(this.#font_size*6));
 
     // Position pointer
     c.beginPath();
@@ -720,26 +905,9 @@ async function loadData()
         let weatherStationBuf = await weatherStationArrayBlob.arrayBuffer();
         let weatherStationArray = new Int16Array(weatherStationBuf);
 
+
         for (i = 0; i < numWeatherStations; i++) {
           weatherStations.push(new Weatherstation(weatherStationArray[i * 2], weatherStationArray[i * 2 + 1]));
-        }
-
-        sliceStart = sliceEnd;
-        sliceEnd += 1 * Int16Array.BYTES_PER_ELEMENT; // one 16 bit int indicates number of weather stations
-        let numcityarrayblob = dataBlob.slice(sliceStart, sliceEnd);
-        let numcitybuf = await numcityarrayblob.arrayBuffer();
-        let numcities = new Int16Array(numcitybuf)[0];
-
-        console.log("number of cities", numcities);
-
-        sliceStart = sliceEnd;
-        sliceEnd += numcities * 2 * Int16Array.BYTES_PER_ELEMENT;
-        let cityarrayblob = dataBlob.slice(sliceStart, sliceEnd);
-        let citybuf = await cityarrayblob.arrayBuffer();
-        let cityarray = new Int16Array(citybuf);
-
-        for (i = 0; i < numcities; i++) {
-          city_blips.push(new cityblip(cityarray[i * 2], cityarray[i * 2 + 1]));
         }
 
         sliceStart = sliceEnd;
@@ -839,6 +1007,13 @@ class LoadingBar
   {
     this.percent = num;
     this.description = text;
+    await this.#update();
+  }
+
+  async showError(error)
+  {
+    this.bar.style.backgroundColor = 'red';
+    this.description = error;
     await this.#update();
   }
 
@@ -1552,7 +1727,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   function setupDatGui(strGuiControls)
   {
     datGui = new dat.GUI();
-    guiControls = JSON.parse(strGuiControls); // load object
+    guiControls = JSON.parse(strGuiControls); // load settings object
+
+    guiControls.tool = "TOOL_NONE";
 
     cam.wrapHorizontally = guiControls.wrapHorizontally;
     cam.smooth = guiControls.SmoothCam;
@@ -1604,14 +1781,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       })
       .name('Wind');
 
-    fluidParams_folder.add(guiControls, 'globalDrying', 0.0, 0.001, 0.00001)
+    fluidParams_folder.add(guiControls, 'globalDrying', 0.0, 0.0001, 0.000001)
       .onChange(function() {
         gl.useProgram(advectionProgram);
         gl.uniform1f(gl.getUniformLocation(advectionProgram, 'globalDrying'), guiControls.globalDrying);
       })
       .name('Global Drying');
 
-    fluidParams_folder.add(guiControls, 'globalHeating', -0.002, 0.002, 0.0001)
+    fluidParams_folder.add(guiControls, 'globalHeating', -0.001, 0.001, 0.00001)
       .onChange(function() {
         gl.useProgram(advectionProgram);
         gl.uniform1f(gl.getUniformLocation(advectionProgram, 'globalHeating'), guiControls.globalHeating);
@@ -1637,12 +1814,11 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         'Urban' : 'TOOL_WALL_URBAN',
         'Fire' : 'TOOL_WALL_FIRE',
         'Smoke / Dust' : 'TOOL_SMOKE',
-        'Moisture' : 'TOOL_WALL_MOIST',
+        'Soil Moisture' : 'TOOL_WALL_MOIST',
         'Vegetation' : 'TOOL_VEGETATION',
         'Snow' : 'TOOL_WALL_SNOW',
         'wind' : 'TOOL_WIND',
         'weather station' : 'TOOL_STATION',
-        'city name' : 'TOOL_CITYNAME',
       })
       .name('Tool')
       .listen();
@@ -1652,7 +1828,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     var radiation_folder = datGui.addFolder('Radiation');
 
-    radiation_folder.add(guiControls, 'timeOfDay', 0.0, 23.96, 0.01).onChange(onUpdateTimeOfDaySlider).name('Time of day').listen(true);
+    radiation_folder.add(guiControls, 'timeOfDay', 0.0, 23.96, 0.01).onChange(onUpdateTimeOfDaySlider).name('Time of day').listen();
 
     radiation_folder.add(guiControls, 'dayNightCycle').name('Day/Night Cycle').listen();
 
@@ -1740,14 +1916,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     var precipitation_folder = datGui.addFolder('Precipitation');
 
-    precipitation_folder.add(guiControls, 'aboveZeroThreshold', 0.1, 2.0, 0.1)
+    precipitation_folder.add(guiControls, 'aboveZeroThreshold', 0.1, 2.0, 0.001)
       .onChange(function() {
         gl.useProgram(precipitationProgram);
         gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'aboveZeroThreshold'), guiControls.aboveZeroThreshold);
       })
       .name('Precipitation Threshold +°C');
 
-    precipitation_folder.add(guiControls, 'subZeroThreshold', 0.0, 2.0, 0.01)
+    precipitation_folder.add(guiControls, 'subZeroThreshold', 0.0, 1.0, 0.001)
       .onChange(function() {
         gl.useProgram(precipitationProgram);
         gl.uniform1f(gl.getUniformLocation(precipitationProgram, 'subZeroThreshold'), guiControls.subZeroThreshold);
@@ -1828,6 +2004,13 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         '6 IR Heating / Cooling' : 'DISP_IRHEATING',
         '7 IR Down -60°C to 26°C' : 'DISP_IRDOWNTEMP',
         '8 IR Up -26°C to 30°C' : 'DISP_IRUPTEMP',
+        '9 Precipitation Mass' : 'DISP_PRECIPFEEDBACK_MASS',
+        'Precipitation Heating/Cooling' : 'DISP_PRECIPFEEDBACK_HEAT',
+        'Precipitation Condensation/Evaporation' : 'DISP_PRECIPFEEDBACK_VAPOR',
+        'Rain Deposition' : 'DISP_PRECIPFEEDBACK_RAIN',
+        'Snow Deposition' : 'DISP_PRECIPFEEDBACK_SNOW',
+        'Precipitation/Soil Moisture' : 'DISP_SOIL_MOISTURE',
+        'Curl' : 'DISP_CURL',
       })
       .name('Display Mode')
       .listen();
@@ -1857,7 +2040,11 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     display_folder.add(guiControls, 'showGraph').onChange(hideOrShowGraph).name('Show Sounding Graph').listen();
     display_folder.add(guiControls, 'showDrops').name('Show Droplets').listen();
     display_folder.add(guiControls, 'realDewPoint').name('Show Real Dew Point');
-    display_folder.add(guiControls, 'imperialUnits').name('Imperial Units');
+    display_folder.add(guiControls, 'imperialUnits').name('Imperial Units').onChange(function() {
+      for (i = 0; i < weatherStations.length; i++) {
+        weatherStations[i].clearChart();
+      }
+    });
 
 
     var advanced_folder = datGui.addFolder('Advanced');
@@ -1965,7 +2152,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       // Drawing wind barbs
       for (var y = 0; (y < sim_res_y); y+=10) {
         var y_pos = map_range(y,sim_res_y,0,0,graphBottem);
-        var velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[4*y], 2) + Math.pow(baseTextureValues[4*y+1],2)));
+        var velocity = rawVelocityTo_ms(Math.sqrt(Math.pow(baseTextureValues[4*y], 2) + Math.pow(baseTextureValues[4*y+1],2)));
   
         var multiplier = ((guiControls.imperialUnits) && 3.6 || 2.23694);
         var speed = clamp(((velocity*multiplier)/100),0,1);
@@ -2018,19 +2205,25 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           }
 
           T_env.push(temp);
-          c.lineTo(T_to_Xpos(temp, scrYpos), scrYpos);                                  // temperature
-        } else if (wallTextureValues[4 * y + 2] == 0) {                                 // is surface layer
-          if (wallTextureValues[4 * y + 0] == 1 || wallTextureValues[4 * y + 0] == 4) { // is land or urban
+          c.lineTo(T_to_Xpos(temp, scrYpos), scrYpos);  // temperature
+        } else if (wallTextureValues[4 * y + 2] == 0) { // is surface layer
+          if (wallTextureValues[4 * y + 0] != 2) {      // is land, urban or fire
             c.fillStyle = 'white';
             c.lineWidth = 1.0;
-            var snowHeight_cm = waterTextureValues[4 * y + 3];
-            if (snowHeight_cm > 0) {
-              c.fillText('❄' + printSnowHeight(snowHeight_cm), 100, scrYpos + 17); // display snow height
+
+            let soilMoisture_mm = waterTextureValues[4 * y + 2];
+            if (soilMoisture_mm > 0.) {
+              c.fillText('💧' + printSoilMoisture(soilMoisture_mm), 65, scrYpos + 17);
+            }
+
+            let snowHeight_cm = waterTextureValues[4 * y + 3];
+            if (snowHeight_cm > 0.) {
+              c.fillText('❄' + printSnowHeight(snowHeight_cm), 160, scrYpos + 17); // display snow height
             }
           } else if (wallTextureValues[4 * y + 0] == 2) {                          // is water
             c.fillStyle = 'lightblue';
             c.lineWidth = 1.0;
-            var waterTempC = KtoC(potentialTemp);                                                           // water temperature is stored as absolute, not dependant on height
+            let waterTempC = KtoC(potentialTemp);                                                           // water temperature is stored as absolute, not dependant on height
             c.fillText('🌊 🌡' + printTemp(waterTempC), T_to_Xpos(waterTempC, scrYpos) - 33, scrYpos + 17); // display water surface temperature
           }
         }
@@ -2038,6 +2231,26 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       c.lineWidth = 2.0; // 3
       c.strokeStyle = '#FF0000';
       c.stroke();
+
+/*
+      // Draw wind indicators
+      c.beginPath();
+      for (var y = surfaceLevel; y < sim_res_y; y++) {
+
+        var scrYpos = map_range(y, sim_res_y, 0, 0, graphBottem);
+
+        var velocity = rawVelocityTo_ms(baseTextureValues[4 * y]); // horizontal wind velocity
+
+        let Xpos = this.graphCanvas.width - 70;
+
+        c.moveTo(Xpos, scrYpos);
+        c.lineTo(Xpos + velocity * 2.5, scrYpos); // draw line segment
+      }
+
+      c.lineWidth = 2.0; // 3
+      c.strokeStyle = '#666666';
+      c.stroke();
+*/
 
       // Draw Dew point line
       c.beginPath();
@@ -2051,8 +2264,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
         var scrYpos = map_range(y, sim_res_y, 0, 0, graphBottem);
 
-        var velocity = rawVelocityToMs(Math.sqrt(Math.pow(baseTextureValues[4 * y], 2) + Math.pow(baseTextureValues[4 * y + 1], 2)));
-
+        var velocity = rawVelocityTo_ms(Math.sqrt(Math.pow(baseTextureValues[4 * y], 2) + Math.pow(baseTextureValues[4 * y + 1], 2)));
         var rh = round_number(calculateRelativeHumidity(temp,dewPoint));
         var pwat = get_pwat(dewPoint);
 
@@ -2094,17 +2306,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       var prevCloudWater = initialCloudWater;
 
       var drylapsePerCell = ((-1.0 / sim_res_y) * guiControls.simHeight * guiControls.dryLapseRate) / 1000.0;
-      var dot_num = 0;
 
       reachedSaturation = false;
 
       c.beginPath();
       var scrYpos = map_range(simYpos, sim_res_y, 0, 0, graphBottem);
       c.moveTo(T_to_Xpos(KtoC(initialTemperature), scrYpos), scrYpos);
-
       for (var y = simYpos + 1; y < sim_res_y; y++) {
         var dT = drylapsePerCell;
-          dot_num += 1;
 
         var cloudWater = max(water - maxWater(prevTemp + dT),
                              0.0); // how much cloud water there would be after that
@@ -2133,17 +2342,16 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
           if (y - simYpos > 5) {
             c.beginPath();
-            c.setLineDash([0,0]);
             c.moveTo(T_to_Xpos(KtoC(T), scrYpos) - 0, scrYpos); // temperature
             c.lineTo(T_to_Xpos(KtoC(T), scrYpos) + 40,
-                    scrYpos);                                  // Horizontal ceiling line
+                     scrYpos);                                  // Horizontal ceiling line
             c.strokeStyle = '#FFFFFF';
             c.stroke();
             c.fillText('' + printAltitude(Math.round(map_range(y - 1, 0, sim_res_y, 0, guiControls.simHeight))), T_to_Xpos(KtoC(T), scrYpos) + 50, scrYpos + 5);
           }
 
-        c.beginPath();
-        c.moveTo(T_to_Xpos(KtoC(T), scrYpos), scrYpos); // temperature
+          c.beginPath();
+          c.moveTo(T_to_Xpos(KtoC(T), scrYpos), scrYpos); // temperature
         }
       }
 
@@ -2153,9 +2361,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       } else
         c.strokeStyle = '#616161';
 
+
       c.stroke();
       c.fillText(`CAPE: ${Math.round(get_cape(T_parcel,T_env))}J/kg`,(graphCanvas.width-220),200);
       c.setLineDash([0,0]);
+
+      c.fillText('' + printDistance(map_range(simXpos, 0, sim_res_y, 0, guiControls.simHeight / 1000.0)), this.graphCanvas.width - 70, 20);
 
       function T_to_Xpos(T, y)
       {
@@ -2273,14 +2484,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     console.log('WATER-----------------------------------------');
     console.log('[0] Water:     ', waterTextureValues[0]);
     console.log('[1] Cloudwater:', waterTextureValues[1]);
-    console.log('[2] Precipitation:', waterTextureValues[2]);
+    console.log('[2] Soil Moisture / Precipitation:', waterTextureValues[2]);
     console.log('[3] Smoke/snow:', waterTextureValues[3]);
 
     console.log('WALL-----------------------------------------');
     console.log('[0] walltype :         ', wallTextureValues[0]);
     console.log('[1] distance:          ', wallTextureValues[1]);
     console.log('[2] Vertical distance :', wallTextureValues[2]);
-    console.log('[3] Vegitation:        ', wallTextureValues[3]);
+    console.log('[3] Vegetation:        ', wallTextureValues[3]);
 
     console.log('LIGHT-----------------------------------------');
     console.log('[0] Sunlight:  ', lightTextureValues[0]);
@@ -2375,7 +2586,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       leftMousePressed = true;
       if (SETUP_MODE) {
         startSimulation();
-      } else if (guiControls.tool == 'TOOL_STATION' || guiControls.tool == 'TOOL_CITYNAME') {
+      } else if (guiControls.tool == 'TOOL_STATION') {
         let simXpos = Math.floor(mouseXinSim * sim_res_x);
         let simYpos = Math.floor(mouseYinSim * sim_res_y);
 
@@ -2385,16 +2596,16 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         var wallTextureValues = new Int8Array(4 * sim_res_y);
         gl.readPixels(simXpos, 0, 1, sim_res_y, gl.RGBA_INTEGER, gl.BYTE, wallTextureValues); // read a vertical culumn of cells
 
-        if (wallTextureValues[simYpos * 4 + 1] > 0) {       // place at mouse position of cell is not wall   
-          if (guiControls.tool == 'TOOL_STATION'){
-            weatherStations.push(new Weatherstation(simXpos, simYpos));
-          return;
-          };
-          if (guiControls.tool == 'TOOL_CITYNAME'){
-            city_blips.push(new cityblip(simXpos, simYpos));
-          return; 
+        if (wallTextureValues[simYpos * 4 + 1] > 0) {                                         // place at mouse position of cell is not wall
+          weatherStations.push(new Weatherstation(simXpos, simYpos));
+        } else {
+          for (let curSimYpos = simYpos; curSimYpos < sim_res_y; curSimYpos++) { // find first cell above that is not wall
+            if (wallTextureValues[curSimYpos * 4 + 1] > 0) {                     // surface reached
+              weatherStations.push(new Weatherstation(simXpos, curSimYpos));
+              break;
+            }
           }
-        } 
+        }
       }
     } else if (e.button == 1) {
       // middle mouse button
@@ -2541,6 +2752,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       guiControls.displayMode = 'DISP_IRDOWNTEMP';
     } else if (event.key == 8) {
       guiControls.displayMode = 'DISP_IRUPTEMP';
+    } else if (event.key == 9) {
+      guiControls.displayMode = 'DISP_PRECIPFEEDBACK_MASS';
+    } else if (event.key == 0) {
+      guiControls.displayMode = 'DISP_PRECIPFEEDBACK_HEAT';
     } else if (event.key == 'ArrowLeft') {
       leftPressed = true;  // <
     } else if (event.key == 'ArrowUp') {
@@ -2554,9 +2769,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       plusPressed = true; // +
     } else if (event.key == '-') {
       event.preventDefault();
-      minusPressed = true;            // -
-    } else if (event.code == 'Backquote') {
-      event.preventDefault();         // prevent anoying ` apearing when typing after
+      minusPressed = true; // -
+    } else if (event.code == 'Backquote' || event.code == 'Escape') {
+      // event.preventDefault();         // tried to prevent anoying ` apearing when typing after, doesn't work
       guiControls.tool = 'TOOL_NONE';
       guiControls.wholeWidth = false; // flashlight can't be whole width
     } else if (event.code == 'KeyQ') {
@@ -2584,14 +2799,33 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       guiControls.tool = 'TOOL_WIND';
     } else if (event.code == 'KeyM') {
       guiControls.tool = 'TOOL_STATION';
+      displayWeatherStations = true;
+      for (i = 0; i < weatherStations.length; i++) {
+        weatherStations[i].setHidden(false);
+      }
+    } else if (event.code == 'KeyN') {
+      if (displayWeatherStations) {
+        displayWeatherStations = false;
+        for (i = 0; i < weatherStations.length; i++) {
+          weatherStations[i].setHidden(true);
+        }
+      } else {
+        displayWeatherStations = true;
+        for (i = 0; i < weatherStations.length; i++) {
+          weatherStations[i].setHidden(false);
+        }
+      }
+
+      if (guiControls.tool == 'TOOL_STATION') // prevent placing weather stations when not visible
+        guiControls.tool = 'TOOL_NONE';
     } else if (event.code == 'KeyL') {
       // reload simulation
       if (initialRainDrops) { // if loaded from save file
         setupPrecipitationBuffers();
         setupTextures();
         gl.bindVertexArray(fluidVao);
-        IterNum = 0;
-        frameNum = 0;
+        // IterNum = 0;
+        // frameNum = 0;
       }
     } else if (event.code == 'PageUp') {
       adjIterPerFrame(1);
@@ -2601,6 +2835,9 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       guiControls.auto_IterPerFrame = false;
     } else if (event.code == 'End') {
       guiControls.auto_IterPerFrame = true;
+    } else if (event.code == 'Home') {
+      guiControls.auto_IterPerFrame = false;
+      guiControls.IterPerFrame = 1;
     }
   });
 
@@ -2643,8 +2880,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
   // load shaders
-  var commonSource = loadSourceFile('shaders/common.glsl');
-  var commonDisplaySource = loadSourceFile('shaders/commonDisplay.glsl');
+  var commonSource = await loadSourceFile('shaders/common.glsl');
+  var commonDisplaySource = await loadSourceFile('shaders/commonDisplay.glsl');
 
   const simVertexShader = await loadShader('simShader.vert');
   const dispVertexShader = await loadShader('dispShader.vert');
@@ -2701,265 +2938,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const postProcessingProgram = createProgram(postProcessingVertexShader, postProcessingShader);
   const isolateBrightPartsProgram = createProgram(postProcessingVertexShader, isolateBrightPartsShader);
   const bloomBlurProgram = createProgram(postProcessingVertexShader, bloomBlurShader);
-
-
-  // Vertex shader program
-  const vsSource = `
-     attribute vec4 aVertexPosition;
-     void main(void) {
-         gl_Position = aVertexPosition;
-     }
-     `;
-
-  // Fragment shader program
-  const fsSource = `#version 300 es
-  precision highp float;
-  out vec4 fragmentColor;
-     void main() {
-      fragmentColor = vec4(1.0, 1.0, 1.0, 1.0); // White color
-     }
-     `;
-
-
-  // Initialize shaders
-  function initShaderProgram(gl, vsSource, fsSource)
-  {
-    //  const vertexShader = loadShader_l(gl, gl.VERTEX_SHADER, vsSource);
-
-    const fragmentShader = loadShader_l(gl, gl.FRAGMENT_SHADER, fsSource);
-
-    const shaderProgram = gl.createProgram();
-    gl.attachShader(shaderProgram, dispVertexShader);
-    gl.attachShader(shaderProgram, fragmentShader);
-    gl.linkProgram(shaderProgram);
-
-    if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-      console.error('Unable to initialize the shader program: ' + gl.getProgramInfoLog(shaderProgram));
-      return null;
-    }
-
-    return shaderProgram;
-  }
-
-  // Load shader
-  function loadShader_l(gl, type, source)
-  {
-    const shader = gl.createShader(type);
-
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      console.error('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
-      gl.deleteShader(shader);
-      return null;
-    }
-
-    return shader;
-  }
-
-  const lightningProgram = initShaderProgram(gl, vsSource, fsSource);
-
-
-  class LineDrawer
-  {
-    constructor()
-    {
-      this.vertices = [];
-      this.continueLine = false;
-    }
-
-    // vertices = new Float32Array(1000000); // buffer size is fixed, but does not have to be filled
-
-    arrInd = 0;
-
-    lastX;
-    lastY;
-
-
-    continueLine; // boolean
-    ltX;          // last top point
-    ltY;
-    lbX;          // last bottem point
-    lbY;
-
-
-    moveTo(x, y)
-    {
-      this.lastX = x;
-      this.lastY = y;
-      this.continueLine = false;
-    }
-
-    addLine(x0, y0, x1, y1, r)
-    {
-      let dx = x1 - x0;
-      let dy = y1 - y0;
-
-      let length = Math.sqrt(dx * dx + dy * dy);
-
-      dx /= length;
-      dy /= length;
-
-      this.vertices[this.arrInd++] = x0 - r * -dy / sim_aspect; // bottem left
-      this.vertices[this.arrInd++] = y0 - r * dx;
-
-      this.vertices[this.arrInd++] = x0 + r * -dy / sim_aspect; // top left
-      this.vertices[this.arrInd++] = y0 + r * dx;
-
-      this.vertices[this.arrInd++] = this.lbX = x1 - r * -dy / sim_aspect; // bottem right
-      this.vertices[this.arrInd++] = this.lbY = y1 - r * dx;
-
-      this.vertices[this.arrInd++] = this.lbX; // bottem right
-      this.vertices[this.arrInd++] = this.lbY;
-
-      this.vertices[this.arrInd++] = x0 + r * -dy / sim_aspect; // top left
-      this.vertices[this.arrInd++] = y0 + r * dx;
-
-      this.vertices[this.arrInd++] = this.ltX = x1 + r * -dy / sim_aspect; // top right
-      this.vertices[this.arrInd++] = this.ltY = y1 + r * dx;
-
-      this.lastX = x1;
-      this.lastY = y1;
-
-      this.continueLine = true;
-    }
-
-    lineTo(x1, y1, r)
-    {
-      let x0 = this.lastX;
-      let y0 = this.lastY;
-
-      if (!this.continueLine) { // not continuing an existing line
-        this.addLine(x0, y0, x1, y1, r);
-        return;
-      }
-
-      // continue line:
-
-      let dx = x1 - x0;
-      let dy = y1 - y0;
-
-      let length = Math.sqrt(dx * dx + dy * dy);
-
-      dx /= length;
-      dy /= length;
-
-
-      this.vertices[this.arrInd++] = this.lbX; // bottem left
-      this.vertices[this.arrInd++] = this.lbY;
-
-      this.vertices[this.arrInd++] = this.ltX; // top left
-      this.vertices[this.arrInd++] = this.ltY;
-
-      this.vertices[this.arrInd++] = this.lbX = x1 - r * -dy / sim_aspect; // bottem right
-      this.vertices[this.arrInd++] = this.lbY = y1 - r * dx;
-
-      this.vertices[this.arrInd++] = this.lbX; // bottem right
-      this.vertices[this.arrInd++] = this.lbY;
-
-      this.vertices[this.arrInd++] = this.ltX; // top left
-      this.vertices[this.arrInd++] = this.ltY;
-
-      this.vertices[this.arrInd++] = this.ltX = x1 + r * -dy / sim_aspect; // top right
-      this.vertices[this.arrInd++] = this.ltY = y1 + r * dx;
-
-      this.lastX = x1;
-      this.lastY = y1;
-      this.continueLine = true;
-    }
-  }
-
-  let lineDrawer = new LineDrawer();
-
-
-  // Draw lightning
-
-  let angle = 0.0;
-  let startX = 0;
-  let startY = canvas.height / 2;
-  angle = Math.PI / 6.;
-  let width = 4.0;
-  const targetAngle = 0.0;
-
-  while (startY > 0.) {
-
-    let nextX = startX + Math.sin(angle);
-    let nextY = startY - Math.cos(angle);
-
-    angle += (Math.random() - 0.5) * 0.7;
-
-    angle -= (angle - targetAngle) * 0.08; // keep it going in a general direction
-
-    lineDrawer.lineTo(nextX / canvas.width / sim_aspect, nextY / canvas.height * 2.0 - 1.0, width / canvas.width);
-
-    startX = nextX;
-    startY = nextY;
-
-    if (Math.random() < 0.015 * (1. - nextY / canvas.height)) {
-      drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 2.5, width * 0.5 * Math.random());
-      //  lineDrawer.lineTo(nextX / canvas.width, nextY / canvas.height);
-      lineDrawer.moveTo(nextX / canvas.width / sim_aspect, nextY / canvas.height * 2.0 - 1.0);
-    }
-  }
-
-  function drawBranch(startX, startY, targetAngle, width)
-  {
-    let angle = targetAngle;
-
-    //  ctx.moveTo(startX, startY);
-    //  ctx.lineWidth = width;
-
-    // lineDrawer.lineTo(startX, startY, width / canvas.width);
-
-    while (startY < canvas.height) {
-
-      const nextX = startX + Math.sin(angle);
-      const nextY = startY - Math.cos(angle);
-
-      angle += (Math.random() - 0.5) * 0.7;
-
-      angle -= (angle - targetAngle) * 0.08; // keep it going in a general direction
-
-                                             //  ctx.lineTo(nextX, nextY);
-      lineDrawer.lineTo(nextX / canvas.width / sim_aspect, nextY / canvas.height * 2.0 - 1.0, width / canvas.width);
-
-      startX = nextX;
-      startY = nextY;
-
-      if (Math.random() < 0.025) { // reduce width
-
-        width -= 0.05;
-
-        if (width < 0.1)
-          return;
-
-        if (Math.random() < 0.1) { // branch 0.005
-
-          drawBranch(nextX, nextY, targetAngle + (Math.random() - 0.5) * 1.5, width);
-        }
-        lineDrawer.moveTo(nextX / canvas.width / sim_aspect, nextY / canvas.height * 2.0 - 1.0); // move back to last position after drawing branch
-      }
-    }
-  }
-
-
-  var lightningVao = gl.createVertexArray(); // vertex array object to store
-  // bufferData and vertexAttribPointer
-  gl.bindVertexArray(lightningVao);
-
-  const lightningVertexBuffer = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, lightningVertexBuffer);
-  // gl.bufferData(gl.ARRAY_BUFFER, lineDrawer.vertices, gl.STATIC_DRAW);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(lineDrawer.vertices), gl.STATIC_DRAW);
-
-
-  const position = gl.getAttribLocation(lightningProgram, "vertPosition");
-  gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
-  gl.enableVertexAttribArray(position);
-
-  gl.bindVertexArray(null);
-  gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
 
   await loadingBar.set(80, 'Setting up textures');
@@ -3313,6 +3291,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   const lightTexture_0 = gl.createTexture();
   const lightTexture_1 = gl.createTexture();
   const precipitationFeedbackTexture = gl.createTexture();
+  const precipitationDepositionTexture = gl.createTexture();
   const lightningLocationTexture = gl.createTexture(); // single pixel texture holding location and timing of current lightning strike
 
   // Static texures:
@@ -3442,8 +3421,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
+  gl.bindTexture(gl.TEXTURE_2D, precipitationDepositionTexture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG32F, sim_res_x, sim_res_y, 0, gl.RG, gl.FLOAT, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
   gl.bindFramebuffer(gl.FRAMEBUFFER, precipitationFeedbackFrameBuff);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, precipitationFeedbackTexture, 0);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, precipitationDepositionTexture, 0);
 
   gl.bindTexture(gl.TEXTURE_2D, lightningLocationTexture);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 1, 1, 0, gl.RGBA, gl.FLOAT, null);
@@ -3525,7 +3510,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
 
   for (let i = 0; i < numLightningTextures; i++) {
-
     const lightningGeneratorWorker = new Worker("./lightningGenerator.js");
     lightningGeneratorWorker.onmessage = (imgElement) => {
       // downloadImageData(imgElement.data); // for debugging
@@ -3607,6 +3591,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'wallTex'), 3);
   gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'lightTex'), 4);
   gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'precipFeedbackTex'), 5);
+  gl.uniform1i(gl.getUniformLocation(boundaryProgram, 'precipDepositionTex'), 6);
   gl.uniform2f(gl.getUniformLocation(boundaryProgram, 'resolution'), sim_res_x, sim_res_y);
   gl.uniform2f(gl.getUniformLocation(boundaryProgram, 'texelSize'), texelSizeX, texelSizeY);
   gl.uniform1f(gl.getUniformLocation(boundaryProgram, 'vorticity'),
@@ -3739,12 +3724,16 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   // preload uniform locations for tiny performance gain
   var uniformLocation_boundaryProgram_iterNum = gl.getUniformLocation(boundaryProgram, 'iterNum');
 
+
+  for (i = 0; i < weatherStations.length; i++) { // initial measurement at weather stations
+    weatherStations[i].measure();
+  }
+
   setInterval(calcFps, 1000); // log fps
   requestAnimationFrame(draw);
 
   function draw()
   { // Runs for every frame
-
     let camPanSpeed = guiControls.camSpeed;
 
     if (rightCtrlPressed) {
@@ -3865,10 +3854,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.uniform1i(gl.getUniformLocation(advectionProgram, 'userInputType'), inputType);
 
 
-      for (i = 0; i < weatherStations.length; i++) { // initial measurement at weather stations
-        weatherStations[i].measure();
-      }
-
       // guiControls.IterPerFrame = 1.0 / timePerIteration * 3600 / 60.0;
 
 
@@ -3930,6 +3915,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
             gl.bindTexture(gl.TEXTURE_2D, lightTexture_0);
             gl.activeTexture(gl.TEXTURE5);
             gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
+            gl.activeTexture(gl.TEXTURE6);
+            gl.bindTexture(gl.TEXTURE_2D, precipitationDepositionTexture);
+
+
             gl.bindFramebuffer(gl.FRAMEBUFFER, frameBuff_0);
             gl.drawBuffers([ gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2 ]);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -4006,6 +3995,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               gl.bindVertexArray(srcVAO);
               gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, destTF);
               gl.beginTransformFeedback(gl.POINTS);
+              gl.drawBuffers([ gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1 ]);
               gl.drawArrays(gl.POINTS, 0, NUM_DROPLETS);
               gl.endTransformFeedback();
 
@@ -4045,16 +4035,12 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
               // console.log('lightningLocationValues: ', lightningLocationValues[0], lightningLocationValues[1], lightningLocationValues[2], IterNum);
             }
 
-            if (IterNum % 100 == 0) {
+            if (displayWeatherStations && IterNum % 208 == 0) { // ~every 60 in game seconds:  0.00008 *3600 * 208 = 59.9
               for (i = 0; i < weatherStations.length; i++) {
                 weatherStations[i].measure();
               }
             }
             IterNum++;
-          }
-
-          for (i = 0; i < city_blips.length; i++) {
-            city_blips[i].update();
           }
         }
 
@@ -4075,7 +4061,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     let cursorType = 1.0; // normal circular brush
     if (guiControls.wholeWidth) {
       cursorType = 2.0;   // cursor whole width brush
-    } else if (SETUP_MODE || (inputType <= 0 && !bPressed && (guiControls.tool == 'TOOL_NONE' || guiControls.tool == 'TOOL_STATION' || guiControls.tool == 'TOOL_CITYNAME'))) {
+    } else if (SETUP_MODE || (inputType <= 0 && !bPressed && (guiControls.tool == 'TOOL_NONE' || guiControls.tool == 'TOOL_STATION'))) {
       cursorType = 0;     // cursor off sig
     }
 
@@ -4151,23 +4137,6 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
 
-      /*
-      // draw lightning using virtices
-            gl.bindVertexArray(lightningVao);
-
-            gl.useProgram(lightningProgram);
-            gl.uniform2f(gl.getUniformLocation(lightningProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
-            gl.uniform3f(gl.getUniformLocation(lightningProgram, 'view'), cam.curXpos, cam.curYpos, cam.curZoom);
-            gl.uniform4f(gl.getUniformLocation(lightningProgram, 'cursor'), mouseXinSim, mouseYinSim, guiControls.brushSize * 0.5, cursorType);
-            gl.uniform1f(gl.getUniformLocation(lightningProgram, 'Xmult'), horizontalDisplayMult);
-            gl.uniform1f(gl.getUniformLocation(lightningProgram, 'iterNum'), IterNum);
-
-
-            gl.drawArrays(gl.TRIANGLES, 0, lineDrawer.arrInd / 2); // draw lightning
-
-            gl.bindVertexArray(fluidVao);
-      */
-
       // draw clouds and terrain
       gl.useProgram(realisticDisplayProgram);
       gl.uniform2f(gl.getUniformLocation(realisticDisplayProgram, 'aspectRatios'), sim_aspect, canvas_aspect);
@@ -4214,8 +4183,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // render bright parts to seperate texture
 
 
-      // BLOOOOM!
-
+      // BLOOM
 
       let lastFBO = bloomFBOs[0];
 
@@ -4287,6 +4255,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
       gl.bindVertexArray(fluidVao);
 
       if (guiControls.showDrops) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
         // draw drops over clouds
         // draw precipitation
         gl.useProgram(precipDisplayProgram);
@@ -4295,6 +4265,7 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         gl.bindVertexArray(destVAO);
         gl.drawArrays(gl.POINTS, 0, NUM_DROPLETS);
         gl.bindVertexArray(fluidVao); // set screenfilling rect again
+        gl.disable(gl.BLEND);
       }
 
 
@@ -4344,20 +4315,17 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
         switch (guiControls.displayMode) {
         case 'DISP_HORIVEL':
           gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 0);
-          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'),
-                       10.0); // 20.0
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 10.0); // 20.0
           break;
         case 'DISP_VERTVEL':
           gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 1);
-          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'),
-                       10.0); // 20.0
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 10.0); // 20.0
           break;
         case 'DISP_WATER':
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, waterTexture_1);
           gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 0);
-          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'),
-                       -0.06); // negative number so positive amount is blue
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), -0.06); // negative number so positive amount is blue
           break;
         case 'DISP_IRHEATING':
           gl.activeTexture(gl.TEXTURE0);
@@ -4365,17 +4333,58 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 1);
           gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 50000.0);
           break;
+        case 'DISP_PRECIPFEEDBACK_MASS':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 0);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 0.3);
+          break;
+        case 'DISP_PRECIPFEEDBACK_HEAT':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 1);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 500.0);
+          break;
+        case 'DISP_PRECIPFEEDBACK_VAPOR':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, precipitationFeedbackTexture);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 2);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 500.0);
+          break;
+        case 'DISP_PRECIPFEEDBACK_RAIN':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, precipitationDepositionTexture);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 0);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 1.0);
+          break;
+        case 'DISP_PRECIPFEEDBACK_SNOW':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, precipitationDepositionTexture);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 1);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 1.0);
+          break;
+        case 'DISP_SOIL_MOISTURE':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, waterTexture_0);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 2);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 0.02);
+          break;
+        case 'DISP_CURL':
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, curlTexture);
+          gl.uniform1i(gl.getUniformLocation(universalDisplayProgram, 'quantityIndex'), 0);
+          gl.uniform1f(gl.getUniformLocation(universalDisplayProgram, 'dispMultiplier'), 7.0);
+          break;
         }
       }
 
-
-      //	gl.bindTexture(gl.TEXTURE_2D, curlTexture);
-      //	gl.bindTexture(gl.TEXTURE_2D, waterTexture_1);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4); // draw to canvas
     }
 
-    for (i = 0; i < weatherStations.length; i++) {
-      weatherStations[i].updateCanvas(); // update weather stations
+    if (displayWeatherStations) {
+      for (i = 0; i < weatherStations.length; i++) {
+        weatherStations[i].updateCanvas(); // update weather stations
+      }
     }
 
     frameNum++;
@@ -4414,13 +4423,8 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     return timeStr + '&nbsp; ' + monthStr;
   }
 
-  function onUpdateTimeOfDaySlider(upd_stations)
+  function onUpdateTimeOfDaySlider()
   {
-    if (upd_stations){
-    for (i = 0; i < weatherStations.length; i++) {
-      weatherStations[i].set_time();
-      };
-    };
     let minutes = (guiControls.timeOfDay % 1) * 60;
     simDateTime.setHours(guiControls.timeOfDay, minutes);
     updateSunlight();
@@ -4437,10 +4441,14 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
   function updateSunlight(deltaT_hours)
   {
     if (deltaT_hours != 'MANUAL_ANGLE') {
-      if (deltaT_hours != null) {
+      if (deltaT_hours != null) {                                                   // increment time
         simDateTime = new Date(simDateTime.getTime() + deltaT_hours * 3600 * 1000); // convert hours to ms and add to current date
         guiControls.timeOfDay = simDateTime.getHours() + simDateTime.getMinutes() / 60.0;
         guiControls.month = simDateTime.getMonth() + 1 + simDateTime.getDate() / 30.0;
+      } else {
+        for (i = 0; i < weatherStations.length; i++) {
+          weatherStations[i].clearChart();
+        }
       }
 
       let timeOfDayRad = (guiControls.timeOfDay / 24.0) * 2.0 * Math.PI; // convert to radians
@@ -4519,19 +4527,10 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
           weatherStationsPositions[i * 2 + 1] = weatherStations[i].getYpos();
         }
 
-        let cityPositions = new Int16Array(city_blips.length * 2);
-        for (i = 0; i < city_blips.length; i++) {
-          cityPositions[i * 2] = city_blips[i].getXpos();
-          cityPositions[i * 2 + 1] = city_blips[i].getYpos();
-        }
 
         let strGuiControls = JSON.stringify(guiControls);
 
-        let saveDataArray = [ Uint16Array.of(sim_res_x), Uint16Array.of(sim_res_y), 
-                              baseTextureValues, waterTextureValues, wallTextureValues, precipBufferValues,
-                              Uint16Array.of(weatherStations.length), weatherStationsPositions, 
-                              Uint16Array.of(city_blips.length), cityPositions,  
-                              strGuiControls ];
+        let saveDataArray = [ Uint16Array.of(sim_res_x), Uint16Array.of(sim_res_y), baseTextureValues, waterTextureValues, wallTextureValues, precipBufferValues, Uint16Array.of(weatherStations.length), weatherStationsPositions, strGuiControls ];
         let blob = new Blob(saveDataArray);        // combine everything into a single blob
         let arrBuff = await blob.arrayBuffer();    // turn into array for pako
         let arr = new Uint8Array(arrBuff);
@@ -4567,11 +4566,17 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
     }
   }
 
-  function loadSourceFile(fileName)
+  async function loadSourceFile(fileName)
   {
-    var request = new XMLHttpRequest();
-    request.open('GET', fileName, false);
-    request.send(null);
+    try {
+      var request = new XMLHttpRequest();
+      request.open('GET', fileName, false);
+      request.send(null);
+    } catch (error) {
+      await loadingBar.showError('ERROR loading shader files! If you just opened index.html, try again using a local server!');
+      throw error;
+    }
+
     if (request.status === 200)
       return request.responseText;
     else if (request.status === 404)
@@ -4601,33 +4606,29 @@ async function mainScript(initialBaseTex, initialWaterTex, initialWallTex, initi
 
     let filename = 'shaders/' + type + '/' + nameIn;
 
-    var shaderSource = loadSourceFile(filename);
-    if (shaderSource) {
-      if (shaderSource.includes('#include "common.glsl"')) {
-        shaderSource = shaderSource.replace('#include "common.glsl"', commonSource);
-      }
-
-      if (shaderSource.includes('#include "commonDisplay.glsl"')) {
-        shaderSource = shaderSource.replace('#include "commonDisplay.glsl"', commonDisplaySource);
-      }
-
-      // try shader optimization step here
-
-      const shader = gl.createShader(shaderType);
-      gl.shaderSource(shader, shaderSource);
-      // console.time('compileShader');
-      gl.compileShader(shader);
-      // console.timeEnd('compileShader')
-
-      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-        // Compile error
-        throw filename + ' COMPILATION ' + gl.getShaderInfoLog(shader);
-      }
-      return new Promise(async (resolve) => {
-        await loadingBar.add(3, 'Loading shader: ' + nameIn);
-        resolve(shader);
-      });
+    var shaderSource = await loadSourceFile(filename);
+    if (shaderSource.includes('#include "common.glsl"')) {
+      shaderSource = shaderSource.replace('#include "common.glsl"', commonSource);
     }
+
+    if (shaderSource.includes('#include "commonDisplay.glsl"')) {
+      shaderSource = shaderSource.replace('#include "commonDisplay.glsl"', commonDisplaySource);
+    }
+
+    const shader = gl.createShader(shaderType);
+    gl.shaderSource(shader, shaderSource);
+    // console.time('compileShader');
+    gl.compileShader(shader);
+    // console.timeEnd('compileShader')
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      // Compile error
+      throw filename + ' COMPILATION ' + gl.getShaderInfoLog(shader);
+    }
+    return new Promise(async (resolve) => {
+      await loadingBar.add(3, 'Loading shader: ' + nameIn);
+      resolve(shader);
+    });
   }
 
   function adjIterPerFrame(adj) { guiControls.IterPerFrame = Math.round(Math.min(Math.max(guiControls.IterPerFrame + adj, 1), 50)); }

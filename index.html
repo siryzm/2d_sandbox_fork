@@ -6,20 +6,33 @@
 	<title>2D Weather Sandbox Fork</title>
 	<script type="text/javascript" src="libraries/dat.gui.min.js"></script>
 	<script type="text/javascript" src="libraries/pako.min.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+	<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 	<script type="text/javascript" src="funcs.js"></script>
 	<script type="text/javascript" src="colors.js"></script>
-	<script type="text/javascript" src="cities.js"></script>
 	<script type="text/javascript" src="app.js"></script>
 	<link rel="shortcut icon" type="image/x-icon" href="favicon.ico">
 	<style>
-		#mainCanvas {
-			position: absolute;
-			top: 0;
-			left: 0;
-		}
-
 		input[type="range"] {
 			width: 800px;
+		}
+
+		canvas {
+			user-select: none;
+		}
+
+		#mainCanvas {
+			position: fixed;
+			top: 0;
+			left: 0;
+			z-index: 0;
+			display: none;
+		}
+
+		#graphCanvas {
+			z-index: 1;
+			position: fixed;
+			display: none
 		}
 
 		.icon-bar {
@@ -117,6 +130,16 @@
 		<h3>Example Save Files</h3>
 
 		<p>
+			<a style="color: white" href="./saves/Mountain uplift cell.weathersandbox">Mountain Uplift Cell at
+				sunset</a>
+		</p>
+
+		<p>
+			<a style="color: white" href="./saves/480 km map with strong derecho.weathersandbox">480 km map with strong
+				Derecho</a>
+		</p>
+
+		<p>
 			<a style="color: white" href="./saves/Three Nice Cells.weathersandbox">Three Nice Cells</a>
 		</p>
 
@@ -146,6 +169,15 @@
 
 		<p>
 			<a style="color: white" href="./saves/Awesome Convergence Cell.weathersandbox">Awesome Convergence Cell</a>
+		</p>
+
+		<p>
+			<a style="color: white" href="./saves/Two nice cells in lake valley.weathersandbox">Two nice cells in lake
+				valley</a>
+		</p>
+
+		<p>
+			<a style="color: white" href="./saves/Insane CAPE.weathersandbox">Insane CAPE</a>
 		</p>
 
 		<p>
@@ -183,7 +215,7 @@
 			<h3>Keys</h3>
 			<table style="width: 1000px">
 				<tr>
-					<td>1 - 8</td>
+					<td>1 - 9</td>
 					<td>Display Modes</td>
 				</tr>
 				<tr>
@@ -195,8 +227,8 @@
 					<td>Invert Tool Action</td>
 				</tr>
 				<tr>
-					<td>~</td>
-					<td>No tool, flashlight</td>
+					<td>Esc</td>
+					<td>No Tool, Flashlight</td>
 				</tr>
 				<tr>
 					<td>Arrows ◄ ▲ ▼ ►</td>
@@ -208,7 +240,7 @@
 				</tr>
 				<tr>
 					<td>Right Ctrl</td>
-					<td>Slow Pan speed</td>
+					<td>Hold For Slower Pan speed</td>
 				</tr>
 				<tr>
 					<td>Space Bar</td>
@@ -220,7 +252,7 @@
 				</tr>
 				<tr>
 					<td>A</td>
-					<td>Toggle flight simulator mode. Mouse controls pitch, Throttle: ▲ ▼ </td>
+					<td>Toggle Flight Simulator Mode. Mouse controls pitch, Throttle: ▲ ▼ </td>
 				</tr>
 				<tr>
 					<td>D</td>
@@ -229,6 +261,10 @@
 				<tr>
 					<td>G</td>
 					<td>Show / Hide Sounding Graph</td>
+				</tr>
+				<tr>
+					<td>N</td>
+					<td>Show / Hide Weather Stations</td>
 				</tr>
 				<tr>
 					<td>M</td>
@@ -244,7 +280,7 @@
 				</tr>
 				<tr>
 					<td>B</td>
-					<td>Change Brush Size By Scrolling</td>
+					<td>Hold To Change Brush Size By Scrolling</td>
 				</tr>
 				<tr>
 					<td>B x 2</td>
@@ -252,8 +288,26 @@
 				</tr>
 				<tr>
 					<td>L</td>
-					<td>Reload from save file</td>
+					<td>Reload From Save File</td>
 				</tr>
+
+				<tr>
+					<td>Home</td>
+					<td>1 Iteration/sec</td>
+				</tr>
+				<tr>
+					<td>End</td>
+					<td>Auto Iterations/sec</td>
+				</tr>
+				<tr>
+					<td>PgUp</td>
+					<td>Increase Iterations/sec</td>
+				</tr>
+				<tr>
+					<td>PgDn</td>
+					<td>Decrease Iterations/sec</td>
+				</tr>
+
 
 			</table>
 
@@ -272,15 +326,8 @@
 			<i>By Niels Daemen</i>
 		</div>
 	</div>
-	<canvas id="graphCanvas" style="z-index: 1; position: absolute; display: none"></canvas>
-	<canvas id="mainCanvas" style="
-				position: fixed;
-				user-select: none;
-				-webkit-user-select: none;
-				-moz-user-select: none;
-				z-index: 0;
-				display: none;
-			">
+	<canvas id="graphCanvas"></canvas>
+	<canvas id="mainCanvas">
 		Your browser does not support HTML5, you must be using a really old
 		browser!
 	</canvas>
